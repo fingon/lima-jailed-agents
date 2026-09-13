@@ -11,20 +11,21 @@ Lima is the only host-side runtime dependency.
 
 ## Install and check
 
-Go is installed through the platform package manager with:
+Go, pipx, and prek are installed through the platform package manager and pipx
+with:
 
 ```sh
 make dep
 ```
 
-On macOS this uses Homebrew (`brew install go`). On Ubuntu it uses the system
-package (`sudo apt-get update` followed by `sudo apt-get install -y
-golang-go`). The target leaves an existing Go installation unchanged.
+On macOS this uses Homebrew for Go and pipx. On Ubuntu it uses the system
+packages (`golang-go` and `pipx`) and installs prek with pipx. The target leaves
+existing Go, pipx, and prek installations unchanged, and installs the
+repository hook.
 
-Install the repository hook and run all checks with:
+Run all checks with:
 
 ```sh
-make bootstrap
 make check
 ```
 
@@ -37,7 +38,7 @@ go run ./cmd/lja --help
 To install the command into the Go bin directory:
 
 ```sh
-go install github.com/fingon/lima-jailed-agents/cmd/lja@latest
+make install
 ```
 
 LJA requires an installed `limactl`. Agent packages and development packages

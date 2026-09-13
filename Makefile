@@ -1,14 +1,14 @@
 PREK ?= prek
+PIPX ?= pipx
+PIPX_BIN_DIR ?= $(HOME)/.local/bin
 
-.PHONY: all bootstrap dep lint test build check
+.PHONY: all dep lint test build install check
 
 all: check
 
-bootstrap:
-	$(PREK) install
-
 dep:
-	@if command -v go >/dev/null 2>&1; then \
+	@set -eu; \
+	if command -v go >/dev/null 2>&1; then \
 		echo "Go is already installed: $$(go version)"; \
 	else \
 		case "$$(uname -s)" in \
@@ -23,7 +23,31 @@ dep:
 			;; \
 		*) echo "unsupported operating system: $$(uname -s)" >&2; exit 1 ;; \
 		esac; \
-	fi
+	fi; \
+	if command -v "$(PIPX)" >/dev/null 2>&1; then \
+		echo "pipx is already installed"; \
+	else \
+		case "$$(uname -s)" in \
+		Darwin) \
+			command -v brew >/dev/null 2>&1 || { echo "Homebrew is required on macOS" >&2; exit 1; }; \
+			brew install pipx; \
+			;; \
+		Linux) \
+			command -v apt-get >/dev/null 2>&1 || { echo "apt-get is required on Ubuntu" >&2; exit 1; }; \
+			sudo apt-get update; \
+			sudo apt-get install -y pipx; \
+			;; \
+		*) echo "unsupported operating system: $$(uname -s)" >&2; exit 1 ;; \
+		esac; \
+	fi; \
+	$(PIPX) ensurepath; \
+	export PATH="$(PIPX_BIN_DIR):$$PATH"; \
+	if command -v "$(PREK)" >/dev/null 2>&1; then \
+		echo "prek is already installed"; \
+	else \
+		$(PIPX) install prek; \
+	fi; \
+	$(PREK) install
 
 lint:
 	$(PREK) run --all-files
@@ -33,5 +57,8 @@ test:
 
 build:
 	go build ./...
+
+install:
+	go install ./cmd/lja
 
 check: lint test build
