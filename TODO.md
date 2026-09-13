@@ -45,7 +45,7 @@ DESIGN.md.
   accepted trust values, insertion of missing entries, and no-op detection.
   Validate input and output; report malformed TOML, duplicate definitions,
   incompatible target types, and edit failures before any write.
-- [ ] Add table-driven golden tests for replacing and inserting trust settings,
+- [x] Add table-driven golden tests for replacing and inserting trust settings,
   creating project entries, preserving comments and unusual spacing, unrelated
   multiline strings/arrays and nested tables, LF/CRLF, missing final newline,
   and byte-identical repeated updates. Assert that unrelated content stays

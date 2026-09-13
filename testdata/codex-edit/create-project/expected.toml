@@ -1,0 +1,8 @@
+# Existing root content must remain unchanged.
+model = "example"
+
+[other]
+enabled = true
+
+[projects.{{EDIT_PROJECT_KEY}}]
+trust_level = "trusted"

@@ -103,6 +103,75 @@ func TestCodexEditPreservesGoldenFixtures(t *testing.T) {
 	}
 }
 
+func TestCodexTrustedConfigPreservesGoldenFixtures(t *testing.T) {
+	root := t.TempDir()
+	projects := map[string]string{
+		"dots":      filepath.Join(root, "project.with.dots"),
+		"quotes":    filepath.Join(root, "quote\"dir"),
+		"backslash": filepath.Join(root, "back\\slash"),
+		"unicode":   filepath.Join(root, "ユニコード"),
+	}
+	for _, project := range projects {
+		assert.NilError(t, os.Mkdir(project, 0o755))
+	}
+	tests := []struct {
+		name     string
+		project  string
+		input    string
+		expected string
+	}{
+		{
+			name:     "replace ordinary trust setting",
+			project:  projects["dots"],
+			input:    "ordinary-replace/input.toml",
+			expected: "ordinary-replace/expected.toml",
+		},
+		{
+			name:     "insert trust into ordinary table",
+			project:  projects["quotes"],
+			input:    "table-insert/input.toml",
+			expected: "table-insert/expected.toml",
+		},
+		{
+			name:     "insert trust into dotted project",
+			project:  projects["backslash"],
+			input:    "dotted-insert/input.toml",
+			expected: "dotted-insert/expected.toml",
+		},
+		{
+			name:     "insert trust into inline project",
+			project:  projects["unicode"],
+			input:    "inline-insert/input.toml",
+			expected: "inline-insert/expected.toml",
+		},
+		{
+			name:     "create missing project",
+			project:  projects["dots"],
+			input:    "create-project/input.toml",
+			expected: "create-project/expected.toml",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			input := materializeCodexEditFixture(t, test.input, test.project)
+			expected := materializeCodexEditFixture(t, test.expected, test.project)
+			updated, err := CodexTrustedConfig(input, []string{test.project})
+			assert.NilError(t, err)
+			assert.Equal(t, updated, expected)
+
+			document, err := tomledit.Parse([]byte(updated))
+			assert.NilError(t, err)
+			value, present := document.Get(codexTrustPath(test.project))
+			assert.Assert(t, present)
+			assert.Equal(t, value, codexTrustedValue)
+
+			repeated, err := CodexTrustedConfig(updated, []string{test.project})
+			assert.NilError(t, err)
+			assert.Equal(t, repeated, expected)
+		})
+	}
+}
+
 func TestCodexTrustedConfigUsesSemanticProjectPaths(t *testing.T) {
 	root := t.TempDir()
 	project := filepath.Join(root, "project.with.dots")
@@ -178,10 +247,9 @@ func TestCodexEditPreservesCRLFAndMissingFinalNewline(t *testing.T) {
 	input = strings.ReplaceAll(input, "\n", "\r\n")
 	expected = strings.ReplaceAll(expected, "\n", "\r\n")
 
-	document, err := tomledit.Parse([]byte(input))
+	updated, err := CodexTrustedConfig(input, []string{project})
 	assert.NilError(t, err)
-	assert.NilError(t, document.Set([]string{codexProjectsKey, project, codexTrustKey}, unstable.RawMessage(codexEditTrustedTOMLValue)))
-	assert.Equal(t, document.String(), expected)
+	assert.Equal(t, updated, expected)
 }
 
 func TestCodexEditRejectsInvalidDocuments(t *testing.T) {

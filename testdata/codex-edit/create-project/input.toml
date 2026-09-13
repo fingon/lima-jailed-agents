@@ -1,0 +1,5 @@
+# Existing root content must remain unchanged.
+model = "example"
+
+[other]
+enabled = true
