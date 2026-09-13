@@ -213,6 +213,35 @@ func TestProjectDiscoveryUsesYAMLMarker(t *testing.T) {
 	assert.Equal(t, discovered, nested)
 }
 
+func TestDevelopmentConfigurationYAMLOutputIsDeterministic(t *testing.T) {
+	config := DevelopmentConfig{
+		Packages:      []string{"make", "git"},
+		CopyGitConfig: false,
+		Env: map[string]string{
+			"Z_LAST":  "last",
+			"A_FIRST": "first",
+		},
+		EnvPassthrough: []string{"TOKEN"},
+		Setup:          []SetupCommand{{Source: "/private/source.yaml", Index: 7, Command: "make dep\nmake build\n"}},
+	}
+	want := "packages:\n  - make\n  - git\ncopy_git_config: false\nenv:\n  A_FIRST: first\n  Z_LAST: last\nenv_passthrough:\n  - TOKEN\nsetup:\n  - |\n    make dep\n    make build\n"
+	encoded, err := yamlConfiguration(config)
+	assert.NilError(t, err)
+	assert.Equal(t, string(encoded), want)
+	assert.Assert(t, !strings.Contains(string(encoded), "private/source.yaml"))
+
+	repeated, err := yamlConfiguration(config)
+	assert.NilError(t, err)
+	assert.DeepEqual(t, repeated, encoded)
+
+	empty, err := yamlConfiguration(DefaultDevelopmentConfig())
+	assert.NilError(t, err)
+	assert.Assert(t, strings.Contains(string(empty), "env: {}\n"))
+	assert.Assert(t, strings.Contains(string(empty), "env_passthrough: []\n"))
+	assert.Assert(t, strings.Contains(string(empty), "setup: []\n"))
+	assert.Assert(t, strings.HasSuffix(string(empty), "\n"))
+}
+
 func TestStateRootPrecedenceAndOverlap(t *testing.T) {
 	root := t.TempDir()
 	project := filepath.Join(root, "project")

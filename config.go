@@ -2,7 +2,6 @@ package lja
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -52,12 +51,12 @@ type DevelopmentConfig struct {
 	Setup          []SetupCommand
 }
 
-type developmentConfigJSON struct {
-	Packages       []string          `json:"packages"`
-	CopyGitConfig  bool              `json:"copy_git_config"`
-	Env            map[string]string `json:"env"`
-	EnvPassthrough []string          `json:"env_passthrough"`
-	Setup          []string          `json:"setup"`
+type developmentConfigYAML struct {
+	Packages       []string          `yaml:"packages"`
+	CopyGitConfig  bool              `yaml:"copy_git_config"`
+	Env            map[string]string `yaml:"env"`
+	EnvPassthrough []string          `yaml:"env_passthrough"`
+	Setup          []string          `yaml:"setup"`
 }
 
 func DefaultDevelopmentConfig() DevelopmentConfig {
@@ -84,7 +83,7 @@ func (config DevelopmentConfig) clone() DevelopmentConfig {
 	return cloned
 }
 
-func (config DevelopmentConfig) AsJSON() developmentConfigJSON {
+func (config DevelopmentConfig) AsYAML() developmentConfigYAML {
 	setup := make([]string, 0, len(config.Setup))
 	for _, command := range config.Setup {
 		setup = append(setup, command.Command)
@@ -95,7 +94,7 @@ func (config DevelopmentConfig) AsJSON() developmentConfigJSON {
 	for name, value := range config.Env {
 		environment[name] = value
 	}
-	return developmentConfigJSON{
+	return developmentConfigYAML{
 		Packages:       packages,
 		CopyGitConfig:  config.CopyGitConfig,
 		Env:            environment,
@@ -498,10 +497,15 @@ func ValidateDevelopmentConfig(content []byte, isProject bool) error {
 	return err
 }
 
-func jsonConfiguration(config DevelopmentConfig) ([]byte, error) {
-	encoded, err := json.MarshalIndent(config.AsJSON(), "", "  ")
-	if err != nil {
+func yamlConfiguration(config DevelopmentConfig) ([]byte, error) {
+	var output bytes.Buffer
+	encoder := yaml.NewEncoder(&output)
+	encoder.SetIndent(2)
+	if err := encoder.Encode(config.AsYAML()); err != nil {
 		return nil, fmt.Errorf("cannot encode configuration: %w", err)
 	}
-	return append(encoded, '\n'), nil
+	if err := encoder.Close(); err != nil {
+		return nil, fmt.Errorf("cannot close configuration encoder: %w", err)
+	}
+	return output.Bytes(), nil
 }

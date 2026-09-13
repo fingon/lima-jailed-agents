@@ -107,9 +107,9 @@ func runCommand(cli *CLI, command string, project string, workingDirectory strin
 		return 0, err
 	}
 	if command == "config" {
-		encoded, jsonErr := jsonConfiguration(development)
-		if jsonErr != nil {
-			return 0, jsonErr
+		encoded, yamlErr := yamlConfiguration(development)
+		if yamlErr != nil {
+			return 0, yamlErr
 		}
 		if _, writeErr := os.Stdout.Write(encoded); writeErr != nil {
 			return 0, ljaError("cannot write configuration: %w", writeErr)
