@@ -449,9 +449,9 @@ func TestCodexTrustEditorPreservesSettingsAndIsIdempotent(t *testing.T) {
 	assert.NilError(t, err)
 	assert.Equal(t, repeated, updated)
 
-	unsupported := `projects = {"/one" = {trust_level = "trusted"}}` + "\n"
-	_, err = CodexTrustedConfig(unsupported, []string{project})
-	assert.ErrorContains(t, err, "unsupported")
+	incompatible := "projects = \"scalar\"\n"
+	_, err = CodexTrustedConfig(incompatible, []string{project})
+	assert.ErrorContains(t, err, "Codex projects must be a table")
 }
 
 func TestCodexTrustPersistenceUsesPrivateModeAndNoUnnecessaryWrite(t *testing.T) {

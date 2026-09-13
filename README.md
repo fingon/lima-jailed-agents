@@ -207,9 +207,9 @@ other host-agent settings and credentials are not imported.
 
 Codex trust entries for the project and launch directory are maintained in the
 selected `.codex/config.toml`. The editor preserves unrelated text and
-comments, supports ordinary single-line project tables, and refuses ambiguous
-or unsupported TOML layouts without writing the file. Login-only launches do
-not change trust entries.
+comments, supports ordinary, dotted-key, and inline project tables, and refuses
+malformed or incompatible TOML layouts without writing the file. Login-only
+launches do not change trust entries.
 
 ## Security boundary and limitations
 

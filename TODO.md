@@ -30,8 +30,8 @@ section of DESIGN.md. The YAML configuration rollout is complete.
 
 ## Codex TOML editing library
 
-The target behavior is described in DESIGN.md under "Planned: library-based
-Codex TOML editing". Keep the current editor until preservation is verified.
+The target behavior is described in the current Codex TOML editing section of
+DESIGN.md.
 
 - [x] Verify `github.com/pelletier/go-toml/v2/unstable/edit` at pinned version
   `v2.4.4-0.20260718201843-686c980c4758` against golden
@@ -40,7 +40,7 @@ Codex TOML editing". Keep the current editor until preservation is verified.
   directories containing dots, quotes, backslashes, and Unicode. If the API
   cannot meet the design, record the specific gap here and defer replacement
   instead of accepting whole-document reformatting.
-- [ ] Replace the hand-written parser with library edits behind the existing
+- [x] Replace the hand-written parser with library edits behind the existing
   `CodexTrustedConfig` signature. Preserve canonicalization, deduplication,
   accepted trust values, insertion of missing entries, and no-op detection.
   Validate input and output; report malformed TOML, duplicate definitions,

@@ -3,6 +3,7 @@ package lja
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -15,7 +16,7 @@ const (
 	codexEditFixtureDirectory = "testdata/codex-edit"
 	codexEditPathPlaceholder  = "{{PROJECT_KEY}}"
 	codexEditInsertedKey      = "{{EDIT_PROJECT_KEY}}"
-	codexTrustedTOMLValue     = `"trusted"`
+	codexEditTrustedTOMLValue = `"trusted"`
 )
 
 func readCodexEditFixture(t *testing.T, name string) string {
@@ -27,7 +28,7 @@ func readCodexEditFixture(t *testing.T, name string) string {
 
 func materializeCodexEditFixture(t *testing.T, name string, project string) string {
 	t.Helper()
-	content := strings.ReplaceAll(readCodexEditFixture(t, name), codexEditPathPlaceholder, tomlQuotedKey(project))
+	content := strings.ReplaceAll(readCodexEditFixture(t, name), codexEditPathPlaceholder, strconv.Quote(project))
 	return strings.ReplaceAll(content, codexEditInsertedKey, "'"+project+"'")
 }
 
@@ -92,12 +93,76 @@ func TestCodexEditPreservesGoldenFixtures(t *testing.T) {
 			} else {
 				assert.Assert(t, !present)
 			}
-			assert.NilError(t, document.Set(path, unstable.RawMessage(codexTrustedTOMLValue)))
+			assert.NilError(t, document.Set(path, unstable.RawMessage(codexEditTrustedTOMLValue)))
 			assert.Equal(t, document.String(), expected)
 
 			value, present := document.Get(path)
 			assert.Assert(t, present)
 			assert.Equal(t, value, "trusted")
+		})
+	}
+}
+
+func TestCodexTrustedConfigUsesSemanticProjectPaths(t *testing.T) {
+	root := t.TempDir()
+	project := filepath.Join(root, "project.with.dots")
+	assert.NilError(t, os.Mkdir(project, 0o755))
+	quotedProject := strconv.Quote(project)
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{
+			name: "ordinary table",
+			content: "[projects." + quotedProject + "]\n" +
+				"trust_level = 'untrusted' # preserve this comment\n" +
+				"other = true\n",
+		},
+		{
+			name:    "dotted keys",
+			content: "projects." + quotedProject + ".name = \"example\"\n",
+		},
+		{
+			name:    "inline table",
+			content: "projects = { " + quotedProject + " = { keep = \"yes\" } }\n",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			updated, err := CodexTrustedConfig(test.content, []string{project, project})
+			assert.NilError(t, err)
+			assert.Assert(t, updated != test.content)
+
+			document, err := tomledit.Parse([]byte(updated))
+			assert.NilError(t, err)
+			value, present := document.Get(codexTrustPath(project))
+			assert.Assert(t, present)
+			assert.Equal(t, value, codexTrustedValue)
+		})
+	}
+}
+
+func TestCodexTrustedConfigRejectsInvalidDocumentsAndTypes(t *testing.T) {
+	root := t.TempDir()
+	project := filepath.Join(root, "project")
+	assert.NilError(t, os.Mkdir(project, 0o755))
+	quotedProject := strconv.Quote(project)
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{name: "malformed TOML", content: "trust_level =\n", want: "invalid Codex TOML"},
+		{name: "duplicate definition", content: "trust_level = \"untrusted\"\ntrust_level = \"trusted\"\n", want: "invalid Codex TOML"},
+		{name: "projects scalar", content: "projects = \"scalar\"\n", want: "Codex projects must be a table"},
+		{name: "project scalar", content: "projects = { " + quotedProject + " = \"scalar\" }\n", want: "must be a table"},
+		{name: "trust scalar", content: "[projects." + quotedProject + "]\ntrust_level = 1\n", want: "must be a string"},
+		{name: "unexpected trust value", content: "[projects." + quotedProject + "]\ntrust_level = \"maybe\"\n", want: "unsupported Codex trust value"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := CodexTrustedConfig(test.content, []string{project})
+			assert.ErrorContains(t, err, test.want)
 		})
 	}
 }
@@ -115,7 +180,7 @@ func TestCodexEditPreservesCRLFAndMissingFinalNewline(t *testing.T) {
 
 	document, err := tomledit.Parse([]byte(input))
 	assert.NilError(t, err)
-	assert.NilError(t, document.Set([]string{codexProjectsKey, project, codexTrustKey}, unstable.RawMessage(codexTrustedTOMLValue)))
+	assert.NilError(t, document.Set([]string{codexProjectsKey, project, codexTrustKey}, unstable.RawMessage(codexEditTrustedTOMLValue)))
 	assert.Equal(t, document.String(), expected)
 }
 

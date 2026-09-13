@@ -237,24 +237,13 @@ locating sources. Missing sources leave existing copies unchanged. Destination
 symlinks, non-regular files, and paths resolving outside the state root are
 errors. Temporary files are fsynced before rename.
 
-Codex trust editing is intentionally conservative because the Go module does
-not need a general TOML dependency. It supports ordinary
-`[projects."absolute path"]` tables and single-line assignments while
-preserving unrelated text and comments. It rejects inline/dotted project
-definitions, nested or duplicate project tables, duplicate trust settings,
-multiline values, and unsupported escapes before any write. Existing file modes
-are preserved; a new file is owner-only (`0600`). A state-root lock serializes
-read-modify-write updates, and an atomic temporary-file replacement avoids
-publishing partial configuration.
-
-### Planned: library-based Codex TOML editing
-
-The editor above remains the current implementation. The planned replacement
-will use `github.com/pelletier/go-toml/v2/unstable/edit`, subject to preservation
-tests before adoption. Its upstream [document editing documentation](https://github.com/pelletier/go-toml#document-editing)
-describes changes that preserve comments, whitespace, ordering, and untouched
-bytes. Pin the dependency because this editing API is explicitly unstable.
-Do not replace the document with a general decode-and-marshal round trip.
+Codex trust editing uses the pinned
+`github.com/pelletier/go-toml/v2/unstable/edit` document editor. It supports
+ordinary project tables, dotted keys, and inline tables through semantic key
+paths while preserving unrelated text, comments, whitespace, ordering, and
+line endings. It rejects malformed TOML, duplicate definitions, incompatible
+target types, and unsupported edits before any write. Do not replace the
+document with a general decode-and-marshal round trip.
 
 Keep `CodexTrustedConfig`'s signature and canonicalize and deduplicate target
 directories as today. Address each trust setting using the separate key
@@ -263,21 +252,17 @@ dots or quotes in a path cannot change its meaning. Change an existing trust
 value to `trusted`, insert a missing setting, or create a missing project
 entry. An already trusted entry must not cause an edit.
 
-Support ordinary project tables, dotted keys, and inline tables through the
-library's semantic key lookup. Unrelated valid TOML, including multiline
-strings and arrays, must survive unchanged. Preserve comments, spacing, line
-endings, and ordering outside the edited value or necessary insertion. New
-content should follow the document's line endings, defaulting to LF for a new
-file. Repeating an update must produce identical bytes and avoid a file write.
+Unrelated valid TOML, including multiline strings and arrays, survives
+unchanged. Comments, spacing, line endings, and ordering are preserved outside
+the edited value or necessary insertion. New content follows the document's
+line endings, defaulting to LF for a new file. Repeating an update produces
+identical bytes and avoids a file write.
 
 Parse and validate the whole input and resulting document before publishing
 any change. Malformed TOML, duplicate definitions, incompatible target types,
 and unsupported edits must return an actionable error without writing. Keep
 the existing accepted trust values (`trusted` and `untrusted`); do not silently
 replace an unexpected value or a scalar where a project table is required.
-If the library cannot meet preservation requirements, leave its adoption
-pending in TODO.md rather than falling back to whole-document formatting.
-
 The existing state-root lock, atomic replacement, file mode preservation,
 owner-only new files, path safety checks, and login-only behavior remain part
 of the contract. The host's separate Codex configuration is not edited.
