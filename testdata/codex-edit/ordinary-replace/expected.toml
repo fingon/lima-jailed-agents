@@ -1,0 +1,14 @@
+# Keep this heading and the spacing below.
+model   = "example"   # preserve the unrelated value
+[projects.{{PROJECT_KEY}}]
+trust_level = "trusted" # preserve this comment
+other = true
+
+[unrelated.nested]
+message = """multi
+line
+value"""
+array = [
+  1,
+  2,
+]

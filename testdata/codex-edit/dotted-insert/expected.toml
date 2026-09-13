@@ -1,0 +1,10 @@
+# Dotted project keys are semantically one project table.
+projects.{{PROJECT_KEY}}.name = "backslash path" # retain the comment
+projects.{{PROJECT_KEY}}.nested = [
+  "one",
+  "two",
+]
+projects.{{EDIT_PROJECT_KEY}}.trust_level = "trusted"
+
+[other]
+enabled = true

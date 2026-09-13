@@ -4,6 +4,7 @@ go 1.25.6
 
 require (
 	github.com/alecthomas/kong v1.16.0
+	github.com/pelletier/go-toml/v2 v2.4.4-0.20260718201843-686c980c4758
 	go.yaml.in/yaml/v3 v3.0.5
 	gotest.tools/v3 v3.5.2
 )

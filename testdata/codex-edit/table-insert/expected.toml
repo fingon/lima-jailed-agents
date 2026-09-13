@@ -1,0 +1,8 @@
+# A table with unusual spacing and an attached comment.
+[projects.{{PROJECT_KEY}}]
+  name    = "quoted path"   # leave this line alone
+trust_level = "trusted"
+
+# This section must stay after the insertion.
+[other]
+values = [1, 2, 3]

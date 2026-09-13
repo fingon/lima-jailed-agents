@@ -33,7 +33,8 @@ section of DESIGN.md. The YAML configuration rollout is complete.
 The target behavior is described in DESIGN.md under "Planned: library-based
 Codex TOML editing". Keep the current editor until preservation is verified.
 
-- [ ] Verify `github.com/pelletier/go-toml/v2/unstable/edit` against golden
+- [x] Verify `github.com/pelletier/go-toml/v2/unstable/edit` at pinned version
+  `v2.4.4-0.20260718201843-686c980c4758` against golden
   preservation fixtures and pin the tested version. Exercise semantic lookup
   and insertion for ordinary tables, dotted keys, and inline tables, including
   directories containing dots, quotes, backslashes, and Unicode. If the API
