@@ -24,7 +24,7 @@ configuration". JSON remains implemented until these steps are complete.
   and project precedence, inheritance switches, comments, multiline commands,
   quoted numeric/boolean environment strings, rejected scalar coercions,
   unknown/duplicate keys, nulls, invalid UTF-8, and multiple documents.
-- [ ] Cover `.lja.yaml` discovery from descendants, explicit project selection,
+- [x] Cover `.lja.yaml` discovery from descendants, explicit project selection,
   legacy JSON filenames no longer acting as markers or configuration sources,
   deterministic YAML output, and unchanged environment resolution behavior.
 

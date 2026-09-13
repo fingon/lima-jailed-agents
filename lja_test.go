@@ -212,6 +212,22 @@ func TestProjectDiscoveryUsesYAMLMarker(t *testing.T) {
 	assert.Equal(t, discovered, nested)
 }
 
+func TestExplicitProjectSelectionUsesExactDirectory(t *testing.T) {
+	root := t.TempDir()
+	selected := filepath.Join(root, "selected")
+	workingDirectory := filepath.Join(selected, "working")
+	assert.NilError(t, os.MkdirAll(workingDirectory, 0o755))
+	assert.NilError(t, os.WriteFile(filepath.Join(selected, projectConfigName), []byte("packages: [git]\n"), 0o600))
+	assert.NilError(t, os.WriteFile(filepath.Join(workingDirectory, projectConfigName), []byte("packages: [ninja-build]\n"), 0o600))
+
+	project, err := ResolveProject(selected, workingDirectory)
+	assert.NilError(t, err)
+	assert.Equal(t, project, selected)
+	config, err := loadDevelopmentConfig(project, map[string]string{xdgConfigHomeEnv: filepath.Join(root, "config")}, root)
+	assert.NilError(t, err)
+	assert.DeepEqual(t, config.Packages, []string{"git"})
+}
+
 func TestDevelopmentConfigurationYAMLOutputIsDeterministic(t *testing.T) {
 	config := DevelopmentConfig{
 		Packages:      []string{"make", "git"},
