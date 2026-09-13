@@ -20,8 +20,8 @@ const (
 	privateStateDirectoryMode os.FileMode = 0o700
 	lockDirectoryName                     = "locks"
 	lockFileSuffix                        = ".lock"
-	projectConfigName                     = ".lja.json"
-	globalConfigName                      = "config.json"
+	projectConfigName                     = ".lja.yaml"
+	globalConfigName                      = "config.yaml"
 	defaultConfigDirectory                = ".config"
 	defaultDataDirectory                  = ".local/share"
 	sharedStateDirectoryName              = "agents"

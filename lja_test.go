@@ -40,7 +40,7 @@ func TestDevelopmentConfigurationLayeringAndEnvironment(t *testing.T) {
 	configHome := filepath.Join(host, ".config")
 	project := filepath.Join(root, "project")
 	assert.NilError(t, os.Mkdir(project, 0o755))
-	globalPath := filepath.Join(configHome, "lja", "config.json")
+	globalPath := filepath.Join(configHome, "lja", globalConfigName)
 	assert.NilError(t, os.MkdirAll(filepath.Dir(globalPath), 0o755))
 	global := map[string]any{
 		"packages":        []string{"git"},
@@ -169,6 +169,48 @@ func TestDevelopmentConfigurationErrorsIncludeSourceAndLocation(t *testing.T) {
 	assert.ErrorContains(t, err, globalPath)
 	assert.ErrorContains(t, err, "line 2")
 	assert.ErrorContains(t, err, "column 5")
+}
+
+func TestDevelopmentConfigurationIgnoresLegacyJSONFiles(t *testing.T) {
+	root := t.TempDir()
+	project := filepath.Join(root, "project")
+	configHome := filepath.Join(root, "config")
+	assert.NilError(t, os.Mkdir(project, 0o755))
+	legacyGlobalPath := filepath.Join(configHome, "lja", "config.json")
+	assert.NilError(t, os.MkdirAll(filepath.Dir(legacyGlobalPath), 0o755))
+	assert.NilError(t, os.WriteFile(legacyGlobalPath, []byte(`{"packages":["ninja-build"]}`), 0o600))
+	assert.NilError(t, os.WriteFile(filepath.Join(project, ".lja.json"), []byte(`{"packages":["ninja-build"]}`), 0o600))
+
+	config, err := loadDevelopmentConfig(project, map[string]string{xdgConfigHomeEnv: configHome}, root)
+	assert.NilError(t, err)
+	assert.DeepEqual(t, config.Packages, []string{gitCommand, makeCommand})
+	assert.Equal(t, config.CopyGitConfig, true)
+}
+
+func TestDevelopmentConfigurationFilenames(t *testing.T) {
+	assert.Equal(t, globalConfigName, "config.yaml")
+	assert.Equal(t, projectConfigName, ".lja.yaml")
+	assert.Equal(t, ProjectConfigName, ".lja.yaml")
+}
+
+func TestProjectDiscoveryUsesYAMLMarker(t *testing.T) {
+	root := t.TempDir()
+	project := filepath.Join(root, "project")
+	nested := filepath.Join(project, "nested")
+	assert.NilError(t, os.MkdirAll(nested, 0o755))
+	limactlCommand := filepath.Join(root, "fake-limactl")
+	assert.NilError(t, os.WriteFile(limactlCommand, []byte("#!/bin/sh\nprintf '%s\\n' '[]'\n"), 0o755))
+
+	assert.NilError(t, os.WriteFile(filepath.Join(project, projectConfigName), []byte("{}\n"), 0o600))
+	discovered, err := DiscoverProject(nested, limactlCommand)
+	assert.NilError(t, err)
+	assert.Equal(t, discovered, project)
+
+	assert.NilError(t, os.Remove(filepath.Join(project, projectConfigName)))
+	assert.NilError(t, os.WriteFile(filepath.Join(project, ".lja.json"), []byte("{}\n"), 0o600))
+	discovered, err = DiscoverProject(nested, limactlCommand)
+	assert.NilError(t, err)
+	assert.Equal(t, discovered, nested)
 }
 
 func TestStateRootPrecedenceAndOverlap(t *testing.T) {
