@@ -1,0 +1,14 @@
+# Project settings override named values and replace packages.
+packages:
+  - ninja-build
+  - ninja-build
+copy_git_config: false
+env:
+  BUILD_MODE: project
+  PROJECT_ONLY: enabled
+env_passthrough:
+  - TOKEN
+  - PROJECT_TOKEN
+setup:
+  - |
+    make test

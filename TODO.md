@@ -18,7 +18,7 @@ configuration". JSON remains implemented until these steps are complete.
   encoding helper with YAML equivalents. Emit deterministic effective settings
   with two-space indentation, empty collections, and a trailing newline,
   without resolving passthrough values or emitting setup provenance.
-- [ ] Convert configuration fixtures and add table-driven tests using
+- [x] Convert configuration fixtures and add table-driven tests using
   `gotest.tools/v3`, with larger examples and expected output in `testdata/`.
   Cover missing files, empty mappings, omitted versus empty settings, global
   and project precedence, inheritance switches, comments, multiline commands,

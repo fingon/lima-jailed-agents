@@ -1,0 +1,4 @@
+env_passthrough:
+  - GLOBAL_TOKEN
+setup:
+  - global setup

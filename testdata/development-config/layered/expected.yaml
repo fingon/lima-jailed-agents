@@ -1,0 +1,19 @@
+packages:
+  - ninja-build
+copy_git_config: false
+env:
+  BUILD_COUNT: "2"
+  BUILD_ENABLED: "true"
+  BUILD_MODE: project
+  EMPTY_VALUE: ""
+  PROJECT_ONLY: enabled
+env_passthrough:
+  - TOKEN
+  - HTTPS_PROXY
+  - PROJECT_TOKEN
+setup:
+  - |
+    make dep
+    make build
+  - |
+    make test

@@ -1,7 +1,6 @@
 package lja
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +8,15 @@ import (
 
 	"gotest.tools/v3/assert"
 )
+
+const developmentConfigFixtureDirectory = "testdata/development-config"
+
+func readDevelopmentConfigFixture(t *testing.T, name string) []byte {
+	t.Helper()
+	content, err := os.ReadFile(filepath.Join(developmentConfigFixtureDirectory, name))
+	assert.NilError(t, err)
+	return content
+}
 
 func TestProjectIdentityIsCanonical(t *testing.T) {
 	temporary := t.TempDir()
@@ -42,39 +50,30 @@ func TestDevelopmentConfigurationLayeringAndEnvironment(t *testing.T) {
 	assert.NilError(t, os.Mkdir(project, 0o755))
 	globalPath := filepath.Join(configHome, "lja", globalConfigName)
 	assert.NilError(t, os.MkdirAll(filepath.Dir(globalPath), 0o755))
-	global := map[string]any{
-		"packages":        []string{"git"},
-		"env":             map[string]string{"A": "global", "B": "kept"},
-		"env_passthrough": []string{"TOKEN", "PROXY"},
-		"setup":           []string{"global-command"},
-	}
-	projectConfig := map[string]any{
-		"packages":        []string{"ninja-build", "ninja-build"},
-		"env":             map[string]string{"A": "project"},
-		"env_passthrough": []string{"TOKEN", "OTHER"},
-		"setup":           []string{"project-command"},
-		"copy_git_config": false,
-	}
-	globalBytes, err := json.Marshal(global)
-	assert.NilError(t, err)
-	projectBytes, err := json.Marshal(projectConfig)
-	assert.NilError(t, err)
-	assert.NilError(t, os.WriteFile(globalPath, globalBytes, 0o600))
+	assert.NilError(t, os.WriteFile(globalPath, readDevelopmentConfigFixture(t, "layered/global.yaml"), 0o600))
 	projectPath := filepath.Join(project, projectConfigName)
-	assert.NilError(t, os.WriteFile(projectPath, projectBytes, 0o600))
+	assert.NilError(t, os.WriteFile(projectPath, readDevelopmentConfigFixture(t, "layered/project.yaml"), 0o600))
 
 	config, err := loadDevelopmentConfig(project, map[string]string{xdgConfigHomeEnv: configHome}, host)
 	assert.NilError(t, err)
 	assert.DeepEqual(t, config.Packages, []string{"ninja-build"})
 	assert.Equal(t, config.CopyGitConfig, false)
-	assert.DeepEqual(t, config.Env, map[string]string{"A": "project", "B": "kept"})
-	assert.DeepEqual(t, config.EnvPassthrough, []string{"TOKEN", "PROXY", "OTHER"})
+	assert.DeepEqual(t, config.Env, map[string]string{
+		"BUILD_COUNT":   "2",
+		"BUILD_ENABLED": "true",
+		"BUILD_MODE":    "project",
+		"EMPTY_VALUE":   "",
+		"PROJECT_ONLY":  "enabled",
+	})
+	assert.DeepEqual(t, config.EnvPassthrough, []string{"TOKEN", "HTTPS_PROXY", "PROJECT_TOKEN"})
 	assert.Equal(t, len(config.Setup), 2)
+	assert.DeepEqual(t, []string{config.Setup[0].Command, config.Setup[1].Command}, []string{"make dep\nmake build\n", "make test\n"})
 
-	resolved, err := config.ResolveEnvironment(map[string]string{"TOKEN": "literal value", "PROXY": "", "OTHER": "other"})
+	resolved, err := config.ResolveEnvironment(map[string]string{"TOKEN": "literal value", "HTTPS_PROXY": "", "PROJECT_TOKEN": "other"})
 	assert.NilError(t, err)
 	assert.DeepEqual(t, resolved, map[string]string{
-		"TOKEN": "literal value", "PROXY": "", "OTHER": "other", "A": "project", "B": "kept",
+		"TOKEN": "literal value", "HTTPS_PROXY": "", "PROJECT_TOKEN": "other",
+		"BUILD_COUNT": "2", "BUILD_ENABLED": "true", "BUILD_MODE": "project", "EMPTY_VALUE": "", "PROJECT_ONLY": "enabled",
 	})
 }
 
@@ -240,6 +239,142 @@ func TestDevelopmentConfigurationYAMLOutputIsDeterministic(t *testing.T) {
 	assert.Assert(t, strings.Contains(string(empty), "env_passthrough: []\n"))
 	assert.Assert(t, strings.Contains(string(empty), "setup: []\n"))
 	assert.Assert(t, strings.HasSuffix(string(empty), "\n"))
+}
+
+func TestDevelopmentConfigurationFixtures(t *testing.T) {
+	tests := []struct {
+		name              string
+		globalFixture     string
+		projectFixture    string
+		expectedFixture   string
+		wantPackages      []string
+		wantCopyGitConfig bool
+		wantEnvironment   map[string]string
+		wantPassthrough   []string
+		wantSetup         []string
+		wantSetupIndices  []int
+	}{
+		{
+			name:              "missing files",
+			expectedFixture:   "missing/expected.yaml",
+			wantPackages:      []string{gitCommand, makeCommand},
+			wantCopyGitConfig: true,
+			wantEnvironment:   map[string]string{},
+			wantPassthrough:   []string{},
+			wantSetup:         []string{},
+			wantSetupIndices:  []int{},
+		},
+		{
+			name:              "empty mappings",
+			globalFixture:     "empty/global.yaml",
+			projectFixture:    "empty/project.yaml",
+			expectedFixture:   "empty/expected.yaml",
+			wantPackages:      []string{gitCommand, makeCommand},
+			wantCopyGitConfig: true,
+			wantEnvironment:   map[string]string{},
+			wantPassthrough:   []string{},
+			wantSetup:         []string{},
+			wantSetupIndices:  []int{},
+		},
+		{
+			name:              "explicit empty settings",
+			projectFixture:    "explicit-empty/project.yaml",
+			expectedFixture:   "explicit-empty/expected.yaml",
+			wantPackages:      []string{},
+			wantCopyGitConfig: true,
+			wantEnvironment:   map[string]string{},
+			wantPassthrough:   []string{},
+			wantSetup:         []string{},
+			wantSetupIndices:  []int{},
+		},
+		{
+			name:              "global and project precedence",
+			globalFixture:     "layered/global.yaml",
+			projectFixture:    "layered/project.yaml",
+			expectedFixture:   "layered/expected.yaml",
+			wantPackages:      []string{"ninja-build"},
+			wantCopyGitConfig: false,
+			wantEnvironment: map[string]string{
+				"BUILD_COUNT":   "2",
+				"BUILD_ENABLED": "true",
+				"BUILD_MODE":    "project",
+				"EMPTY_VALUE":   "",
+				"PROJECT_ONLY":  "enabled",
+			},
+			wantPassthrough:  []string{"TOKEN", "HTTPS_PROXY", "PROJECT_TOKEN"},
+			wantSetup:        []string{"make dep\nmake build\n", "make test\n"},
+			wantSetupIndices: []int{1, 1},
+		},
+		{
+			name:              "inheritance switches",
+			globalFixture:     "inherit-disabled/global.yaml",
+			projectFixture:    "inherit-disabled/project.yaml",
+			expectedFixture:   "inherit-disabled/expected.yaml",
+			wantPackages:      []string{gitCommand, makeCommand},
+			wantCopyGitConfig: true,
+			wantEnvironment:   map[string]string{},
+			wantPassthrough:   []string{"PROJECT_TOKEN"},
+			wantSetup:         []string{"project setup"},
+			wantSetupIndices:  []int{1},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			project := filepath.Join(root, "project")
+			configHome := filepath.Join(root, "config")
+			assert.NilError(t, os.Mkdir(project, 0o755))
+			if test.globalFixture != "" {
+				globalPath := filepath.Join(configHome, "lja", globalConfigName)
+				assert.NilError(t, os.MkdirAll(filepath.Dir(globalPath), 0o755))
+				assert.NilError(t, os.WriteFile(globalPath, readDevelopmentConfigFixture(t, test.globalFixture), 0o600))
+			}
+			if test.projectFixture != "" {
+				projectPath := filepath.Join(project, projectConfigName)
+				assert.NilError(t, os.WriteFile(projectPath, readDevelopmentConfigFixture(t, test.projectFixture), 0o600))
+			}
+
+			config, err := loadDevelopmentConfig(project, map[string]string{xdgConfigHomeEnv: configHome}, root)
+			assert.NilError(t, err)
+			assert.DeepEqual(t, config.Packages, test.wantPackages)
+			assert.Equal(t, config.CopyGitConfig, test.wantCopyGitConfig)
+			assert.DeepEqual(t, config.Env, test.wantEnvironment)
+			assert.DeepEqual(t, config.EnvPassthrough, test.wantPassthrough)
+			assert.Equal(t, len(config.Setup), len(test.wantSetup))
+			for index, command := range test.wantSetup {
+				assert.Equal(t, config.Setup[index].Command, command)
+				assert.Equal(t, config.Setup[index].Index, test.wantSetupIndices[index])
+			}
+
+			encoded, err := yamlConfiguration(config)
+			assert.NilError(t, err)
+			expected := readDevelopmentConfigFixture(t, test.expectedFixture)
+			assert.Equal(t, string(encoded), string(expected))
+		})
+	}
+}
+
+func TestDevelopmentConfigurationFixtureValidationErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		fixture string
+		want    string
+	}{
+		{name: "unknown setting", fixture: "invalid/unknown.yaml", want: "unknown settings"},
+		{name: "duplicate setting", fixture: "invalid/duplicate.yaml", want: "duplicate configuration key"},
+		{name: "duplicate environment", fixture: "invalid/duplicate-env.yaml", want: "duplicate env key"},
+		{name: "null value", fixture: "invalid/null.yaml", want: "must not be null"},
+		{name: "null environment value", fixture: "invalid/null-environment.yaml", want: "must be a mapping with string values"},
+		{name: "scalar coercion", fixture: "invalid/scalar-coercion.yaml", want: "must be a boolean"},
+		{name: "array scalar coercion", fixture: "invalid/array-scalar-coercion.yaml", want: "must be a string"},
+		{name: "multiple documents", fixture: "invalid/multiple-documents.yaml", want: "single YAML document"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidateDevelopmentConfig(readDevelopmentConfigFixture(t, test.fixture), true)
+			assert.ErrorContains(t, err, test.want)
+		})
+	}
 }
 
 func TestStateRootPrecedenceAndOverlap(t *testing.T) {

@@ -1,0 +1,6 @@
+inherit_env_passthrough: false
+inherit_setup: false
+env_passthrough:
+  - PROJECT_TOKEN
+setup:
+  - project setup

@@ -1,0 +1,18 @@
+# Global defaults are inherited unless the project replaces them.
+packages:
+  - git
+  - make
+  - ninja-build
+copy_git_config: true
+env:
+  BUILD_MODE: global
+  BUILD_COUNT: "2"
+  BUILD_ENABLED: "true"
+  EMPTY_VALUE: ""
+env_passthrough:
+  - TOKEN
+  - HTTPS_PROXY
+setup:
+  - |
+    make dep
+    make build
