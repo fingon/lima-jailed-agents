@@ -85,6 +85,92 @@ func TestDevelopmentConfigurationRejectsManagedEnvironment(t *testing.T) {
 	assert.ErrorContains(t, err, "invalid package name")
 }
 
+func TestDevelopmentConfigurationAcceptsYAMLAndPreservesPresence(t *testing.T) {
+	content := []byte(`
+# A YAML comment is not part of the command.
+packages:
+  - git
+  - make
+copy_git_config: false
+env:
+  BUILD_MODE: development
+  BUILD_COUNT: "3"
+env_passthrough:
+  - TOKEN
+setup:
+  - |
+    make dep
+    make build
+inherit_setup: false
+inherit_env_passthrough: true
+`)
+	decoded, err := decodeDevelopmentConfig(content, true)
+	assert.NilError(t, err)
+	assert.DeepEqual(t, decoded.Packages, []string{"git", "make"})
+	assert.Equal(t, decoded.HasPackages, true)
+	assert.Equal(t, decoded.CopyGitConfig, false)
+	assert.Equal(t, decoded.HasCopyGitConfig, true)
+	assert.DeepEqual(t, decoded.Env, map[string]string{"BUILD_MODE": "development", "BUILD_COUNT": "3"})
+	assert.Equal(t, decoded.HasEnv, true)
+	assert.DeepEqual(t, decoded.EnvPassthrough, []string{"TOKEN"})
+	assert.Equal(t, decoded.HasEnvPassthrough, true)
+	assert.DeepEqual(t, decoded.Setup, []string{"make dep\nmake build\n"})
+	assert.Equal(t, decoded.HasSetup, true)
+	assert.Equal(t, decoded.InheritSetup, false)
+	assert.Equal(t, decoded.HasInheritSetup, true)
+	assert.Equal(t, decoded.InheritEnvironmentPassthrough, true)
+	assert.Equal(t, decoded.HasInheritEnvironmentPassthrough, true)
+
+	decoded, err = decodeDevelopmentConfig([]byte("{}\n"), true)
+	assert.NilError(t, err)
+	assert.Equal(t, decoded.HasPackages, false)
+	assert.Equal(t, decoded.HasCopyGitConfig, false)
+	assert.Equal(t, decoded.HasEnv, false)
+	assert.Equal(t, decoded.HasEnvPassthrough, false)
+	assert.Equal(t, decoded.HasSetup, false)
+}
+
+func TestDevelopmentConfigurationRejectsInvalidYAML(t *testing.T) {
+	tests := []struct {
+		name    string
+		content []byte
+		want    string
+	}{
+		{name: "unknown setting", content: []byte("unknown: true\n"), want: "unknown settings: unknown"},
+		{name: "duplicate setting", content: []byte("packages: []\npackages: []\n"), want: "duplicate configuration key: packages"},
+		{name: "duplicate environment", content: []byte("env:\n  BUILD_MODE: one\n  BUILD_MODE: two\n"), want: "duplicate env key: BUILD_MODE"},
+		{name: "null setting", content: []byte("packages: null\n"), want: "packages must not be null"},
+		{name: "null environment value", content: []byte("env:\n  BUILD_MODE: null\n"), want: "env must be a mapping with string values"},
+		{name: "scalar coercion", content: []byte("copy_git_config: \"true\"\n"), want: "copy_git_config must be a boolean"},
+		{name: "array scalar coercion", content: []byte("packages: [git, true]\n"), want: "packages must be a string"},
+		{name: "root sequence", content: []byte("- git\n"), want: "configuration must be a mapping"},
+		{name: "multiple documents", content: []byte("{}\n---\n{}\n"), want: "single YAML document"},
+		{name: "empty input", content: []byte("# comment only\n"), want: "must contain a YAML document"},
+		{name: "invalid UTF-8", content: []byte{'p', 'a', 'c', 'k', 'a', 'g', 'e', 's', ':', ' ', 0xff}, want: "not valid UTF-8"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidateDevelopmentConfig(test.content, true)
+			assert.ErrorContains(t, err, test.want)
+		})
+	}
+}
+
+func TestDevelopmentConfigurationErrorsIncludeSourceAndLocation(t *testing.T) {
+	root := t.TempDir()
+	project := filepath.Join(root, "project")
+	configHome := filepath.Join(root, "config")
+	assert.NilError(t, os.Mkdir(project, 0o755))
+	globalPath := filepath.Join(configHome, "lja", globalConfigName)
+	assert.NilError(t, os.MkdirAll(filepath.Dir(globalPath), 0o755))
+	assert.NilError(t, os.WriteFile(globalPath, []byte("packages:\n  - true\n"), 0o600))
+
+	_, err := loadDevelopmentConfig(project, map[string]string{xdgConfigHomeEnv: configHome}, root)
+	assert.ErrorContains(t, err, globalPath)
+	assert.ErrorContains(t, err, "line 2")
+	assert.ErrorContains(t, err, "column 5")
+}
+
 func TestStateRootPrecedenceAndOverlap(t *testing.T) {
 	root := t.TempDir()
 	project := filepath.Join(root, "project")

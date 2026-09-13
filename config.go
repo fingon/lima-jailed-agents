@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -11,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"go.yaml.in/yaml/v3"
 )
 
 const (
@@ -23,6 +26,11 @@ const (
 	configInheritEnvironmentPassthrough = "inherit_env_passthrough"
 	makeCommand                         = "make"
 	packageInstalledStatus              = "install ok installed"
+	yamlBoolTag                         = "!!bool"
+	yamlMapTag                          = "!!map"
+	yamlNullTag                         = "!!null"
+	yamlSequenceTag                     = "!!seq"
+	yamlStringTag                       = "!!str"
 )
 
 var (
@@ -139,56 +147,127 @@ type sourceDevelopmentConfig struct {
 	HasInheritEnvironmentPassthrough bool
 }
 
-func decodeConfigArray(raw json.RawMessage, name string) ([]string, error) {
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || trimmed[0] != '[' {
-		return nil, ljaError("%s must be an array of nonempty strings", name)
+func configNodeError(node *yaml.Node, format string, arguments ...any) error {
+	message := fmt.Sprintf(format, arguments...)
+	if node == nil || node.Line <= 0 {
+		return ljaError("%s", message)
 	}
-	var values []json.RawMessage
-	if err := json.Unmarshal(trimmed, &values); err != nil {
-		return nil, ljaError("%s must be an array of nonempty strings: %w", name, err)
+	if node.Column <= 0 {
+		return ljaError("%s at line %d", message, node.Line)
 	}
-	decoded := make([]string, 0, len(values))
-	for _, rawValue := range values {
-		var value string
-		if err := json.Unmarshal(rawValue, &value); err != nil || strings.TrimSpace(value) == "" || strings.IndexByte(value, 0) >= 0 {
-			return nil, ljaError("%s must be an array of nonempty strings", name)
+	return ljaError("%s at line %d, column %d", message, node.Line, node.Column)
+}
+
+func isYAMLNull(node *yaml.Node) bool {
+	return node != nil && node.Kind == yaml.ScalarNode && node.Tag == yamlNullTag
+}
+
+func configMapping(node *yaml.Node, name string) ([][2]*yaml.Node, error) {
+	if node == nil || node.Kind != yaml.MappingNode || node.Tag != yamlMapTag {
+		if isYAMLNull(node) {
+			return nil, configNodeError(node, "%s must not be null", name)
+		}
+		return nil, configNodeError(node, "%s must be a mapping", name)
+	}
+	if len(node.Content)%2 != 0 {
+		return nil, configNodeError(node, "%s has an invalid mapping", name)
+	}
+	entries := make([][2]*yaml.Node, 0, len(node.Content)/2)
+	seen := make(map[string]bool, len(node.Content)/2)
+	for index := 0; index < len(node.Content); index += 2 {
+		key := node.Content[index]
+		value := node.Content[index+1]
+		if key == nil || key.Kind != yaml.ScalarNode || key.Tag != yamlStringTag {
+			return nil, configNodeError(key, "%s keys must be strings", name)
+		}
+		if strings.IndexByte(key.Value, 0) >= 0 {
+			return nil, configNodeError(key, "%s keys must not contain NUL characters", name)
+		}
+		if seen[key.Value] {
+			return nil, configNodeError(key, "duplicate %s key: %s", name, key.Value)
+		}
+		seen[key.Value] = true
+		entries = append(entries, [2]*yaml.Node{key, value})
+	}
+	return entries, nil
+}
+
+func decodeConfigString(node *yaml.Node, name string, requireNonempty bool) (string, error) {
+	if node == nil || node.Kind != yaml.ScalarNode || node.Tag != yamlStringTag {
+		if isYAMLNull(node) {
+			return "", configNodeError(node, "%s must not be null", name)
+		}
+		return "", configNodeError(node, "%s must be a string", name)
+	}
+	if strings.IndexByte(node.Value, 0) >= 0 {
+		return "", configNodeError(node, "%s must not contain NUL characters", name)
+	}
+	if requireNonempty && strings.TrimSpace(node.Value) == "" {
+		return "", configNodeError(node, "%s must be an array of nonempty strings", name)
+	}
+	return node.Value, nil
+}
+
+func decodeConfigArray(node *yaml.Node, name string) ([]string, error) {
+	if node == nil || node.Kind != yaml.SequenceNode || node.Tag != yamlSequenceTag {
+		if isYAMLNull(node) {
+			return nil, configNodeError(node, "%s must not be null", name)
+		}
+		return nil, configNodeError(node, "%s must be an array of nonempty strings", name)
+	}
+	decoded := make([]string, 0, len(node.Content))
+	for _, item := range node.Content {
+		value, err := decodeConfigString(item, name, true)
+		if err != nil {
+			return nil, err
 		}
 		decoded = append(decoded, value)
 	}
 	return decoded, nil
 }
 
-func decodeConfigBool(raw json.RawMessage, name string) (bool, error) {
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || (trimmed[0] != 't' && trimmed[0] != 'f') {
-		return false, ljaError("%s must be a boolean", name)
+func decodeConfigBool(node *yaml.Node, name string) (bool, error) {
+	if node == nil || node.Kind != yaml.ScalarNode || node.Tag != yamlBoolTag {
+		if isYAMLNull(node) {
+			return false, configNodeError(node, "%s must not be null", name)
+		}
+		return false, configNodeError(node, "%s must be a boolean", name)
 	}
 	var value bool
-	if err := json.Unmarshal(trimmed, &value); err != nil {
-		return false, ljaError("%s must be a boolean", name)
+	if err := node.Decode(&value); err != nil {
+		return false, configNodeError(node, "%s must be a boolean: %v", name, err)
 	}
 	return value, nil
 }
 
-func decodeConfigEnvironment(raw json.RawMessage) (map[string]string, error) {
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || trimmed[0] != '{' {
-		return nil, ljaError("env must be an object with string values without NUL characters")
+func decodeConfigEnvironment(node *yaml.Node) (map[string]string, error) {
+	entries, err := configMapping(node, "env")
+	if err != nil {
+		return nil, err
 	}
-	var values map[string]json.RawMessage
-	if err := json.Unmarshal(trimmed, &values); err != nil {
-		return nil, ljaError("env must be an object with string values without NUL characters: %w", err)
-	}
-	decoded := make(map[string]string, len(values))
-	for name, rawValue := range values {
-		var value string
-		if err := json.Unmarshal(rawValue, &value); err != nil || strings.IndexByte(value, 0) >= 0 {
-			return nil, ljaError("env must be an object with string values without NUL characters")
+	reserved := reservedEnvironmentNames()
+	decoded := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		if err := validateEnvironmentName(entry[0], entry[0].Value, reserved); err != nil {
+			return nil, err
 		}
-		decoded[name] = value
+		value, valueErr := decodeConfigString(entry[1], "env values", false)
+		if valueErr != nil {
+			return nil, configNodeError(entry[1], "env must be a mapping with string values without NUL characters: %s", valueErr)
+		}
+		decoded[entry[0].Value] = value
 	}
 	return decoded, nil
+}
+
+func validateEnvironmentName(node *yaml.Node, name string, reserved map[string]bool) error {
+	if !environmentNamePattern.MatchString(name) {
+		return configNodeError(node, "invalid environment variable name: %s", name)
+	}
+	if reserved[name] {
+		return configNodeError(node, "environment variable %s is managed by LJA", name)
+	}
+	return nil
 }
 
 func reservedEnvironmentNames() map[string]bool {
@@ -204,16 +283,38 @@ func reservedEnvironmentNames() map[string]bool {
 	}
 }
 
-func decodeDevelopmentConfig(content []byte, isProject bool) (sourceDevelopmentConfig, error) {
+func decodeYAMLDocument(content []byte) (*yaml.Node, error) {
 	if !utf8.Valid(content) {
-		return sourceDevelopmentConfig{}, ljaError("configuration is not valid UTF-8")
+		return nil, ljaError("configuration is not valid UTF-8")
 	}
-	var values map[string]json.RawMessage
-	if err := json.Unmarshal(content, &values); err != nil || values == nil {
-		if err != nil {
-			return sourceDevelopmentConfig{}, ljaError("invalid JSON: %w", err)
+	decoder := yaml.NewDecoder(bytes.NewReader(content))
+	var document yaml.Node
+	if err := decoder.Decode(&document); err != nil {
+		if err == io.EOF {
+			return nil, ljaError("configuration must contain a YAML document")
 		}
-		return sourceDevelopmentConfig{}, ljaError("expected a JSON object")
+		return nil, ljaError("invalid YAML: %w", err)
+	}
+	var extra yaml.Node
+	if err := decoder.Decode(&extra); err == nil {
+		return nil, configNodeError(&extra, "configuration must contain a single YAML document")
+	} else if err != io.EOF {
+		return nil, ljaError("invalid YAML: %w", err)
+	}
+	if document.Kind != yaml.DocumentNode || len(document.Content) != 1 {
+		return nil, configNodeError(&document, "configuration must contain a YAML mapping")
+	}
+	return document.Content[0], nil
+}
+
+func decodeDevelopmentConfig(content []byte, isProject bool) (sourceDevelopmentConfig, error) {
+	root, err := decodeYAMLDocument(content)
+	if err != nil {
+		return sourceDevelopmentConfig{}, err
+	}
+	entries, err := configMapping(root, "configuration")
+	if err != nil {
+		return sourceDevelopmentConfig{}, err
 	}
 	allowed := map[string]bool{
 		configPackages: true, configCopyGitConfig: true, configEnvironment: true,
@@ -223,87 +324,83 @@ func decodeDevelopmentConfig(content []byte, isProject bool) (sourceDevelopmentC
 		allowed[configInheritSetup] = true
 		allowed[configInheritEnvironmentPassthrough] = true
 	}
+	values := make(map[string]*yaml.Node, len(entries))
 	unknown := make([]string, 0)
-	for name := range values {
+	var unknownNode *yaml.Node
+	for _, entry := range entries {
+		name := entry[0].Value
+		values[name] = entry[1]
 		if !allowed[name] {
 			unknown = append(unknown, name)
+			if unknownNode == nil {
+				unknownNode = entry[0]
+			}
 		}
 	}
 	if len(unknown) != 0 {
 		sort.Strings(unknown)
-		return sourceDevelopmentConfig{}, ljaError("unknown settings: %s", strings.Join(unknown, ", "))
+		return sourceDevelopmentConfig{}, configNodeError(unknownNode, "unknown settings: %s", strings.Join(unknown, ", "))
 	}
 	decoded := sourceDevelopmentConfig{Env: make(map[string]string)}
-	if raw, present := values[configPackages]; present {
-		packages, err := decodeConfigArray(raw, configPackages)
+	if node, present := values[configPackages]; present {
+		packages, err := decodeConfigArray(node, configPackages)
 		if err != nil {
 			return sourceDevelopmentConfig{}, err
 		}
-		for _, packageName := range packages {
+		for index, packageName := range packages {
 			if !packageNamePattern.MatchString(packageName) {
-				return sourceDevelopmentConfig{}, ljaError("invalid package name: %s", packageName)
+				return sourceDevelopmentConfig{}, configNodeError(node.Content[index], "invalid package name: %s", packageName)
 			}
 		}
 		decoded.Packages, decoded.HasPackages = packages, true
 	}
-	if raw, present := values[configCopyGitConfig]; present {
-		value, err := decodeConfigBool(raw, configCopyGitConfig)
+	if node, present := values[configCopyGitConfig]; present {
+		value, err := decodeConfigBool(node, configCopyGitConfig)
 		if err != nil {
 			return sourceDevelopmentConfig{}, err
 		}
 		decoded.CopyGitConfig, decoded.HasCopyGitConfig = value, true
 	}
-	if raw, present := values[configEnvironment]; present {
-		environment, err := decodeConfigEnvironment(raw)
+	if node, present := values[configEnvironment]; present {
+		environment, err := decodeConfigEnvironment(node)
 		if err != nil {
 			return sourceDevelopmentConfig{}, err
 		}
 		decoded.Env, decoded.HasEnv = environment, true
 	}
-	if raw, present := values[configEnvironmentPassthrough]; present {
-		passthrough, err := decodeConfigArray(raw, configEnvironmentPassthrough)
+	if node, present := values[configEnvironmentPassthrough]; present {
+		passthrough, err := decodeConfigArray(node, configEnvironmentPassthrough)
 		if err != nil {
 			return sourceDevelopmentConfig{}, err
 		}
+		reserved := reservedEnvironmentNames()
+		for index, name := range passthrough {
+			if err := validateEnvironmentName(node.Content[index], name, reserved); err != nil {
+				return sourceDevelopmentConfig{}, err
+			}
+		}
 		decoded.EnvPassthrough, decoded.HasEnvPassthrough = passthrough, true
 	}
-	if raw, present := values[configSetup]; present {
-		setup, err := decodeConfigArray(raw, configSetup)
+	if node, present := values[configSetup]; present {
+		setup, err := decodeConfigArray(node, configSetup)
 		if err != nil {
 			return sourceDevelopmentConfig{}, err
 		}
 		decoded.Setup, decoded.HasSetup = setup, true
 	}
-	if raw, present := values[configInheritSetup]; present {
-		value, err := decodeConfigBool(raw, configInheritSetup)
+	if node, present := values[configInheritSetup]; present {
+		value, err := decodeConfigBool(node, configInheritSetup)
 		if err != nil {
 			return sourceDevelopmentConfig{}, err
 		}
 		decoded.InheritSetup, decoded.HasInheritSetup = value, true
 	}
-	if raw, present := values[configInheritEnvironmentPassthrough]; present {
-		value, err := decodeConfigBool(raw, configInheritEnvironmentPassthrough)
+	if node, present := values[configInheritEnvironmentPassthrough]; present {
+		value, err := decodeConfigBool(node, configInheritEnvironmentPassthrough)
 		if err != nil {
 			return sourceDevelopmentConfig{}, err
 		}
 		decoded.InheritEnvironmentPassthrough, decoded.HasInheritEnvironmentPassthrough = value, true
-	}
-	reserved := reservedEnvironmentNames()
-	for name := range decoded.Env {
-		if !environmentNamePattern.MatchString(name) {
-			return sourceDevelopmentConfig{}, ljaError("invalid environment variable name: %s", name)
-		}
-		if reserved[name] {
-			return sourceDevelopmentConfig{}, ljaError("environment variable %s is managed by LJA", name)
-		}
-	}
-	for _, name := range decoded.EnvPassthrough {
-		if !environmentNamePattern.MatchString(name) {
-			return sourceDevelopmentConfig{}, ljaError("invalid environment variable name: %s", name)
-		}
-		if reserved[name] {
-			return sourceDevelopmentConfig{}, ljaError("environment variable %s is managed by LJA", name)
-		}
 	}
 	return decoded, nil
 }

@@ -167,6 +167,55 @@ to setup and the selected guest command. They are not written to wrappers,
 configuration output, or LJA logs. `config`, `status`, and `stop` do not require
 passthrough variables; `stop-all` skips development configuration entirely.
 
+### Planned: YAML configuration
+
+This change is not implemented yet; the JSON behavior above remains current.
+Implementation steps are tracked in [TODO.md](TODO.md).
+
+The global file will be `${XDG_CONFIG_HOME:-~/.config}/lja/config.yaml` and the
+project file will be `.lja.yaml`. Discovery will use `.lja.yaml` as its file
+marker. Only the `.yaml` filenames will be recognized; legacy JSON filenames
+will neither be loaded nor select a project. This prototype needs no migration
+tooling or compatibility fallback. Lima's JSON protocol is unaffected.
+
+Both optional files will contain a single YAML mapping, decoded with
+[go.yaml.in/yaml/v3](https://pkg.go.dev/go.yaml.in/yaml/v3). Node validation will
+enforce string keys, string values in `env`, boolean settings, and sequences
+of strings without implicit scalar coercion. Unknown and duplicate keys, null
+values, invalid UTF-8, and multiple documents will be errors. Existing package,
+environment, and project-only inheritance validation will remain in effect.
+Missing files retain defaults; an explicit empty mapping is valid.
+
+Defaults and merge semantics will remain unchanged, including the distinction
+between omitted settings and explicit empty collections. Comments and literal
+block strings will be accepted, allowing a project configuration such as:
+
+```yaml
+# Packages replace the inherited list.
+packages: [git, make, ninja-build]
+copy_git_config: true
+env:
+  BUILD_MODE: development
+  BUILD_COUNT: "3" # Environment values must be strings.
+env_passthrough: [HTTPS_PROXY]
+inherit_setup: false
+setup:
+  - |
+    make dep
+    make build
+```
+
+Each block remains one setup entry, executed by the existing `sh -eu -c`
+workflow with its source path and one-based entry index. Configuration loading
+will never rewrite source files.
+
+`lja config` will emit deterministic YAML with two-space indentation and a
+trailing newline, including empty collections and the existing effective
+settings. It will not resolve passthrough values or include setup provenance.
+The JSON-specific output representation and `AsJSON` helper will be replaced
+with a YAML representation; the loading and validation API signatures remain
+unchanged, and the exported project filename constant changes to `.lja.yaml`.
+
 ## Guest preparation and agents
 
 Development packages are checked with `dpkg-query`. Missing packages are
@@ -228,6 +277,41 @@ multiline values, and unsupported escapes before any write. Existing file modes
 are preserved; a new file is owner-only (`0600`). A state-root lock serializes
 read-modify-write updates, and an atomic temporary-file replacement avoids
 publishing partial configuration.
+
+### Planned: library-based Codex TOML editing
+
+The editor above remains the current implementation. The planned replacement
+will use `github.com/pelletier/go-toml/v2/unstable/edit`, subject to preservation
+tests before adoption. Its upstream [document editing documentation](https://github.com/pelletier/go-toml#document-editing)
+describes changes that preserve comments, whitespace, ordering, and untouched
+bytes. Pin the dependency because this editing API is explicitly unstable.
+Do not replace the document with a general decode-and-marshal round trip.
+
+Keep `CodexTrustedConfig`'s signature and canonicalize and deduplicate target
+directories as today. Address each trust setting using the separate key
+segments `projects`, the literal canonical directory, and `trust_level` so
+dots or quotes in a path cannot change its meaning. Change an existing trust
+value to `trusted`, insert a missing setting, or create a missing project
+entry. An already trusted entry must not cause an edit.
+
+Support ordinary project tables, dotted keys, and inline tables through the
+library's semantic key lookup. Unrelated valid TOML, including multiline
+strings and arrays, must survive unchanged. Preserve comments, spacing, line
+endings, and ordering outside the edited value or necessary insertion. New
+content should follow the document's line endings, defaulting to LF for a new
+file. Repeating an update must produce identical bytes and avoid a file write.
+
+Parse and validate the whole input and resulting document before publishing
+any change. Malformed TOML, duplicate definitions, incompatible target types,
+and unsupported edits must return an actionable error without writing. Keep
+the existing accepted trust values (`trusted` and `untrusted`); do not silently
+replace an unexpected value or a scalar where a project table is required.
+If the library cannot meet preservation requirements, leave its adoption
+pending in TODO.md rather than falling back to whole-document formatting.
+
+The existing state-root lock, atomic replacement, file mode preservation,
+owner-only new files, path safety checks, and login-only behavior remain part
+of the contract. The host's separate Codex configuration is not edited.
 
 ## Git configuration
 
