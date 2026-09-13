@@ -50,7 +50,7 @@ DESIGN.md.
   multiline strings/arrays and nested tables, LF/CRLF, missing final newline,
   and byte-identical repeated updates. Assert that unrelated content stays
   unchanged and the resulting semantic change affects only requested trust.
-- [ ] Retain and extend persistence checks for locking, atomic replacement,
+- [x] Retain and extend persistence checks for locking, atomic replacement,
   preserved file modes, `0600` new files, rejected symlinks and unsafe paths,
   unchanged files on errors, and no writes for already trusted directories.
   Keep login-only launches from changing trust.

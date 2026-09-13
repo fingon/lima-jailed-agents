@@ -467,10 +467,15 @@ func TestCodexTrustPersistenceUsesPrivateModeAndNoUnnecessaryWrite(t *testing.T)
 	assert.Equal(t, info.Mode().Perm(), os.FileMode(0o600))
 	before, err := os.ReadFile(configPath)
 	assert.NilError(t, err)
+	beforeInfo, err := os.Stat(configPath)
+	assert.NilError(t, err)
 	assert.NilError(t, ensureCodexDirectoryTrust(state, []string{project}, filepath.Join(root, "locks")))
 	after, err := os.ReadFile(configPath)
 	assert.NilError(t, err)
 	assert.DeepEqual(t, after, before)
+	afterInfo, err := os.Stat(configPath)
+	assert.NilError(t, err)
+	assert.Assert(t, os.SameFile(beforeInfo, afterInfo))
 }
 
 func TestAgentInvocationAndWrappers(t *testing.T) {
@@ -691,8 +696,20 @@ exit 98
 	assert.NilError(t, err)
 	_, err = os.Stat(filepath.Join(root, "codex"))
 	assert.NilError(t, err)
-	_, err = os.Stat(filepath.Join(state, codexStateDirectoryName, codexConfigName))
+	configPath := filepath.Join(state, codexStateDirectoryName, codexConfigName)
+	_, err = os.Stat(configPath)
 	assert.NilError(t, err)
+	assert.NilError(t, os.Remove(configPath))
+	code, err = RunAgent(project, codexAgentName, []string{"login"}, nil, "", WorkflowOptions{
+		StateRoot:     state,
+		Development:   &development,
+		LimaCommand:   commandPath,
+		LockDirectory: locks,
+	})
+	assert.NilError(t, err)
+	assert.Equal(t, code, 17)
+	_, err = os.Stat(configPath)
+	assert.Assert(t, os.IsNotExist(err))
 }
 
 func TestGitConfigCopiesAndWriteScript(t *testing.T) {
