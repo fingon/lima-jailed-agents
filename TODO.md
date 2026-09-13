@@ -2,19 +2,19 @@
 
 ## YAML development configuration
 
-The target behavior is described in DESIGN.md under "Planned: YAML
-configuration". JSON remains implemented until these steps are complete.
+The target behavior is described in the current development configuration
+section of DESIGN.md. The YAML configuration rollout is complete.
 
 - [x] Add and pin `go.yaml.in/yaml/v3`. Replace JSON decoding with YAML node
   validation and retain setting presence, defaults, merging, inheritance,
   package validation, and environment restrictions. Reject unknown/duplicate
   keys, nulls, invalid types, invalid UTF-8, and multiple documents; include
   the source filename and available location information in errors.
-- [ ] Switch global/project filename constants, including the exported project
+- [x] Switch global/project filename constants, including the exported project
   filename, to `config.yaml` and `.lja.yaml`. Update project discovery to use
   the new marker. Remove legacy JSON filename support without adding migration
   tooling or fallback; leave Lima JSON handling unchanged.
-- [ ] Replace the JSON-specific output representation, `AsJSON`, and CLI
+- [x] Replace the JSON-specific output representation, `AsJSON`, and CLI
   encoding helper with YAML equivalents. Emit deterministic effective settings
   with two-space indentation, empty collections, and a trailing newline,
   without resolving passthrough values or emitting setup provenance.
@@ -56,9 +56,9 @@ Codex TOML editing". Keep the current editor until preservation is verified.
 
 ## Complete each implementation
 
-- [ ] Update README.md examples and behavior descriptions alongside the code
+- [x] Update README.md examples and behavior descriptions alongside the code
   and tests. Promote the corresponding planned DESIGN.md section to current
   behavior, removing superseded descriptions and completed backlog items.
-- [ ] Ensure the prek hook is installed and run `make lint`, `make test`, and
+- [x] Ensure the prek hook is installed and run `make lint`, `make test`, and
   `make build` after implementation. Review the diff for unintended formatting
   changes and keep dependencies scoped to the implemented feature.

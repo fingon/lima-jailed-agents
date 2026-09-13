@@ -45,7 +45,7 @@ in their interpretation.
 
 `--project` selects one exact directory. Otherwise, the canonical current
 directory is retained as the launch directory while discovery checks that
-directory and each parent for the nearest `.lja.json` or deterministic VM name.
+directory and each parent for the nearest `.lja.yaml` or deterministic VM name.
 Lima is queried at most once during a discovery walk. A failed query or malformed
 response is an error, not an absent VM. A project configuration is not merged
 from ancestors after discovery. Git roots are not special.
@@ -138,27 +138,39 @@ environment values or prompts.
 
 ## Development configuration
 
-The global file is `${XDG_CONFIG_HOME:-~/.config}/lja/config.json`; the project
-file is `.lja.json` directly below the selected project. Both are optional JSON
-objects. Unknown keys and invalid types are rejected, as are package options,
-invalid environment names, NUL values, and variables managed by LJA.
+The global file is `${XDG_CONFIG_HOME:-~/.config}/lja/config.yaml`; the project
+file is `.lja.yaml` directly below the selected project. Both are optional
+single-document YAML mappings decoded with
+[go.yaml.in/yaml/v3](https://pkg.go.dev/go.yaml.in/yaml/v3). Legacy JSON
+filenames are ignored and do not select a project. Lima's JSON protocol is
+unaffected.
+
+Node validation requires string keys, string values in `env`, booleans for
+boolean settings, and sequences of strings for list settings. Unknown and
+duplicate keys, null values, invalid types, invalid UTF-8, and multiple YAML
+documents are rejected. Errors include the source filename when loading a file
+and include a line and column whenever the YAML node has that information.
+Package names, environment names, NUL values, and variables managed by LJA are
+also rejected. Missing files retain defaults, while an explicit empty mapping
+is valid.
 
 The effective defaults are:
 
-```json
-{
-  "packages": ["git", "make"],
-  "copy_git_config": true,
-  "env": {},
-  "env_passthrough": [],
-  "setup": []
-}
+```yaml
+packages:
+  - git
+  - make
+copy_git_config: true
+env: {}
+env_passthrough: []
+setup: []
 ```
 
 Project package lists replace the inherited list and are deduplicated. Explicit
 environment values merge by name. Setup commands and passthrough names append
 unless the project disables inheritance. Each setup entry records its source
-and one-based command index for failure reporting.
+and one-based command index for failure reporting. YAML comments and literal
+block strings are accepted; each block remains one setup entry.
 
 Caller environment values are read only when an operation needs to prepare a
 VM. A passthrough name must exist, while an explicit `env` value takes
@@ -167,54 +179,11 @@ to setup and the selected guest command. They are not written to wrappers,
 configuration output, or LJA logs. `config`, `status`, and `stop` do not require
 passthrough variables; `stop-all` skips development configuration entirely.
 
-### Planned: YAML configuration
-
-This change is not implemented yet; the JSON behavior above remains current.
-Implementation steps are tracked in [TODO.md](TODO.md).
-
-The global file will be `${XDG_CONFIG_HOME:-~/.config}/lja/config.yaml` and the
-project file will be `.lja.yaml`. Discovery will use `.lja.yaml` as its file
-marker. Only the `.yaml` filenames will be recognized; legacy JSON filenames
-will neither be loaded nor select a project. This prototype needs no migration
-tooling or compatibility fallback. Lima's JSON protocol is unaffected.
-
-Both optional files will contain a single YAML mapping, decoded with
-[go.yaml.in/yaml/v3](https://pkg.go.dev/go.yaml.in/yaml/v3). Node validation will
-enforce string keys, string values in `env`, boolean settings, and sequences
-of strings without implicit scalar coercion. Unknown and duplicate keys, null
-values, invalid UTF-8, and multiple documents will be errors. Existing package,
-environment, and project-only inheritance validation will remain in effect.
-Missing files retain defaults; an explicit empty mapping is valid.
-
-Defaults and merge semantics will remain unchanged, including the distinction
-between omitted settings and explicit empty collections. Comments and literal
-block strings will be accepted, allowing a project configuration such as:
-
-```yaml
-# Packages replace the inherited list.
-packages: [git, make, ninja-build]
-copy_git_config: true
-env:
-  BUILD_MODE: development
-  BUILD_COUNT: "3" # Environment values must be strings.
-env_passthrough: [HTTPS_PROXY]
-inherit_setup: false
-setup:
-  - |
-    make dep
-    make build
-```
-
-Each block remains one setup entry, executed by the existing `sh -eu -c`
-workflow with its source path and one-based entry index. Configuration loading
-will never rewrite source files.
-
 `lja config` will emit deterministic YAML with two-space indentation and a
 trailing newline, including empty collections and the existing effective
 settings. It will not resolve passthrough values or include setup provenance.
-The JSON-specific output representation and `AsJSON` helper will be replaced
-with a YAML representation; the loading and validation API signatures remain
-unchanged, and the exported project filename constant changes to `.lja.yaml`.
+Configuration loading never rewrites source files, and the exported project
+filename constant is `.lja.yaml`.
 
 ## Guest preparation and agents
 
@@ -336,7 +305,7 @@ complete a partial transfer. The host configuration is never modified.
 ## Validation strategy
 
 The repository uses `gotest.tools/v3` assertions and table-oriented tests for
-the pure workflow pieces. Tests cover canonical identity, JSON/configuration
+the pure workflow pieces. Tests cover canonical identity, YAML/configuration
 validation, exact mount logic, state precedence, process argument boundaries,
 Codex editing, instruction replacement, Git path rewriting, wrappers, and
 failure handling. A fake `limactl` command can be supplied through

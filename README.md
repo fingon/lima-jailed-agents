@@ -88,7 +88,7 @@ options always take precedence.
 ## Project discovery and VMs
 
 When `--project` is omitted, LJA starts at the canonical current directory and
-searches upward for the nearest `.lja.json` or deterministic LJA VM. If no
+searches upward for the nearest `.lja.yaml` or deterministic LJA VM. If no
 marker is found, the current directory is used. There is no automatic Git-root
 discovery. The current invocation directory remains the guest working directory
 even when an ancestor is selected as the project root.
@@ -126,24 +126,45 @@ an absent or already stopped project VM. `stop-all` affects only VMs in the
 
 ## Development configuration
 
-LJA optionally reads these JSON objects, in order:
+LJA optionally reads these YAML mappings, in order:
 
 ```text
-${XDG_CONFIG_HOME:-~/.config}/lja/config.json
-<selected-project>/.lja.json
+${XDG_CONFIG_HOME:-~/.config}/lja/config.yaml
+<selected-project>/.lja.yaml
 ```
 
 The project file is not searched for in ancestors after project selection.
-`config` prints the merged result without resolving caller environment values.
+Legacy JSON filenames are ignored. `config` prints the merged result as
+deterministic YAML without resolving caller environment values.
 
-```json
-{
-  "packages": ["git", "make", "ninja-build"],
-  "copy_git_config": true,
-  "env": {"BUILD_MODE": "development"},
-  "env_passthrough": ["HTTPS_PROXY", "GH_TOKEN"],
-  "setup": ["sh ./scripts/dev-setup.sh"]
-}
+```yaml
+packages: [git, make, ninja-build]
+copy_git_config: true
+env:
+  BUILD_MODE: development
+  BUILD_COUNT: "3"
+env_passthrough: [HTTPS_PROXY, GH_TOKEN]
+setup:
+  - |
+    sh ./scripts/dev-setup.sh
+```
+
+Configuration must be a single YAML mapping. Keys and `env` values must be
+strings, booleans must be YAML booleans, and list values must be sequences of
+strings. Unknown or duplicate keys, nulls, implicit scalar coercions, invalid
+UTF-8, and multiple documents are errors. Comments and multiline setup blocks
+are supported.
+
+The effective defaults are:
+
+```yaml
+packages:
+  - git
+  - make
+copy_git_config: true
+env: {}
+env_passthrough: []
+setup: []
 ```
 
 `packages` replaces the inherited package list and is deduplicated. `env` is
