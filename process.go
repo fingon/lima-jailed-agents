@@ -60,6 +60,8 @@ func runLima(arguments []string, options processOptions) (ProcessResult, error) 
 	}
 	if options.hasInput {
 		cmd.Stdin = bytes.NewReader(options.inputData)
+	} else {
+		cmd.Stdin = os.Stdin
 	}
 	runErr := cmd.Run()
 	result := ProcessResult{Stdout: stdout.Bytes(), Stderr: stderr.Bytes(), ExitCode: 0}

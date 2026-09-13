@@ -223,6 +223,30 @@ func TestGuestProcessPreservesArgumentAndEnvironmentBoundaries(t *testing.T) {
 	assert.ErrorContains(t, err, "contains a NUL")
 }
 
+func TestLimaProcessInheritsStdin(t *testing.T) {
+	commandPath := filepath.Join(t.TempDir(), "fake-limactl")
+	command := "#!/bin/sh\nIFS= read -r value\nprintf '%s' \"$value\"\n"
+	assert.NilError(t, os.WriteFile(commandPath, []byte(command), 0o755))
+
+	stdinReader, stdinWriter, err := os.Pipe()
+	assert.NilError(t, err)
+	originalStdin := os.Stdin
+	os.Stdin = stdinReader
+	t.Cleanup(func() {
+		os.Stdin = originalStdin
+		assert.NilError(t, stdinReader.Close())
+	})
+	_, err = stdinWriter.WriteString("forwarded\n")
+	assert.NilError(t, err)
+	assert.NilError(t, stdinWriter.Close())
+
+	options := defaultProcessOptions(commandPath)
+	options.captureOutput = true
+	result, err := runLima([]string{"read-stdin"}, options)
+	assert.NilError(t, err)
+	assert.Equal(t, string(result.Stdout), "forwarded")
+}
+
 func TestInstructionRefreshIsAtomicAndOptional(t *testing.T) {
 	root := t.TempDir()
 	host := filepath.Join(root, "host")
