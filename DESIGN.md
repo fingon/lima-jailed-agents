@@ -43,6 +43,10 @@ are parsed by Kong. Agent and shell arguments are retained as a vector and are
 forwarded after an optional leading `--` is removed. No host shell is involved
 in their interpretation.
 
+The `make` command uses the same project selection, VM preparation, environment,
+working-directory, recreation, and exit-status behavior as `shell`, but always
+prepends the guest `make` executable. It does not prepare or launch an agent.
+
 `--project` selects one exact directory. Otherwise, the canonical current
 directory is retained as the launch directory while discovery checks that
 directory and each parent for the nearest `.lja.yaml` or deterministic VM name.
@@ -200,6 +204,10 @@ Host commands are constructed as argument vectors and executed with
 ```text
 limactl shell [--tty=false] --workdir PROJECT VM [NAME=VALUE...] COMMAND...
 ```
+
+For example, `lja make -- test` invokes `make test` directly through this
+argument-vector boundary; it does not run a host or guest shell to interpret
+the make arguments.
 
 Environment names are sorted for deterministic calls, validated against the
 portable shell variable pattern, and checked for NUL values. Setup commands

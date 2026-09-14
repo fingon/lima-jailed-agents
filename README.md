@@ -11,6 +11,14 @@ Lima is the only host-side runtime dependency.
 
 ## Install and check
 
+Install the latest LJA command from GitHub (preferred) with:
+
+```sh
+go install github.com/fingon/lima-jailed-agents/cmd/lja@latest
+```
+
+Go installs the command into the Go bin directory, which must be on `PATH`.
+
 Go, pipx, and prek are installed through the platform package manager and pipx
 with:
 
@@ -35,7 +43,7 @@ To run the CLI from a checkout:
 go run ./cmd/lja --help
 ```
 
-To install the command into the Go bin directory:
+To install the command from a checkout:
 
 ```sh
 make install
@@ -51,6 +59,7 @@ lja [OPTIONS] codex [-- AGENT_ARGS...]
 lja [OPTIONS] claude [-- AGENT_ARGS...]
 lja [OPTIONS] opencode [-- AGENT_ARGS...]
 lja [OPTIONS] shell [-- SHELL_ARGS...]
+lja [OPTIONS] make [-- MAKE_ARGS...]
 lja [OPTIONS] create [--recreate]
 lja [OPTIONS] config
 lja [OPTIONS] status
@@ -66,6 +75,7 @@ lja --project ~/src/example codex -- exec "Review the current change"
 lja --project ~/src/example claude -- auth login
 lja --project ~/src/example --with-agent claude --with-agent opencode codex
 lja --project ~/src/example shell -- make test
+lja --project ~/src/example make -- test
 lja --project ~/src/example create
 lja --project ~/src/example create --recreate
 lja --project ~/src/example --recreate shell
@@ -82,15 +92,17 @@ Options before the command select the project and storage:
 - `--state-dir PATH` selects a shared state root.
 - `--project-state` stores state below the project instead.
 - `--with-agent AGENT` prepares another agent in the same VM. It is repeatable.
-- `--recreate` replaces the VM before create, shell, agent launch, or update.
+- `--recreate` replaces the VM before create, shell, make, agent launch, or update.
 - `-v` enables debug logging.
 
 Arguments after the optional `--` separator are forwarded as raw argument
-vectors. LJA does not perform host shell expansion on them. The selected agent
-receives its normal guest executable name and gets an execution permission
-default; native login commands are forwarded without that default. OpenCode is
-started with an allow-permission configuration. Explicit native permission
-options always take precedence.
+vectors. LJA does not perform host shell expansion on them. The `make` command
+invokes the guest `make` executable directly in the current working directory
+and forwards its arguments unchanged. The selected agent receives its normal
+guest executable name and gets an execution permission default; native login
+commands are forwarded without that default. OpenCode is started with an
+allow-permission configuration. Explicit native permission options always take
+precedence.
 
 ## Project discovery and VMs
 

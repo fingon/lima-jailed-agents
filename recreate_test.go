@@ -249,6 +249,39 @@ func vmFixture(t *testing.T, status string) (string, string, WorkflowOptions) {
 	return project, name, WorkflowOptions{Development: &config, LimaCommand: command, LockDirectory: filepath.Join(root, "locks")}
 }
 
+func TestMakeCommandPassesThroughGuestArgumentsAndExitStatus(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		failure  string
+		wantCode int
+	}{
+		{name: "success", wantCode: 0},
+		{name: "make failure", failure: "connect", wantCode: 23},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			project, vmName, options := vmFixture(t, "")
+			root := filepath.Dir(project)
+			assert.NilError(t, os.WriteFile(filepath.Join(project, projectConfigName), []byte("packages: []\ncopy_git_config: false\n"), 0o600))
+			t.Setenv("HOME", root)
+			t.Setenv(xdgConfigHomeEnv, filepath.Join(root, "config"))
+			t.Setenv("PATH", filepath.Dir(options.LimaCommand)+string(os.PathListSeparator)+os.Getenv("PATH"))
+			t.Setenv(vmFailureEnv, test.failure)
+
+			cli := CLI{ProjectState: true}
+			cli.Make.Arguments = []string{"--", "-f", "Makefile", "target with spaces"}
+			code, err := runCommand(&cli, makeCommand, project, project)
+			assert.NilError(t, err)
+			assert.Equal(t, code, test.wantCode)
+
+			database, err := readVMDatabase()
+			assert.NilError(t, err)
+			assert.DeepEqual(t, database.Operations[len(database.Operations)-1], []string{
+				"shell", "--workdir", project, vmName, "make", "-f", "Makefile", "target with spaces",
+			})
+		})
+	}
+}
+
 func TestCreateVM(t *testing.T) {
 	for _, status := range []string{"", limaStatusStopped, limaStatusRunning, limaStatusBroken} {
 		t.Run(status, func(t *testing.T) {
@@ -337,7 +370,7 @@ func TestRecreateFailures(t *testing.T) {
 }
 
 func TestRecreateParsing(t *testing.T) {
-	for _, command := range []string{createCommandName, "shell", codexAgentName, claudeAgentName, openCodeAgentName, "update", "config", "status", stopCommandName, deleteCommandName} {
+	for _, command := range []string{createCommandName, "shell", makeCommand, codexAgentName, claudeAgentName, openCodeAgentName, "update", "config", "status", stopCommandName, deleteCommandName} {
 		t.Run(command, func(t *testing.T) {
 			for _, before := range []bool{true, false} {
 				cli := CLI{}
@@ -371,6 +404,20 @@ func TestRecreateParsing(t *testing.T) {
 	assert.NilError(t, err)
 	assert.Equal(t, cli.Recreate, false)
 	assert.DeepEqual(t, forwardedArguments(cli.Codex.Arguments), []string{"--recreate"})
+}
+
+func TestMakeParsing(t *testing.T) {
+	cli := CLI{}
+	parser, err := newParser(&cli)
+	assert.NilError(t, err)
+	context, err := parser.Parse([]string{makeCommand, "--", "-f", "Makefile", "target with spaces"})
+	assert.NilError(t, err)
+	assert.Equal(t, commandName(context), makeCommand)
+	assert.DeepEqual(t, forwardedArguments(cli.Make.Arguments), []string{"-f", "Makefile", "target with spaces"})
+
+	cli.WithAgent = []string{codexAgentName}
+	_, err = requestedAgents(&cli, makeCommand)
+	assert.ErrorContains(t, err, "--with-agent is only valid")
 }
 
 func TestRecreateCleanupFailures(t *testing.T) {
