@@ -53,9 +53,9 @@ lja [OPTIONS] opencode [-- AGENT_ARGS...]
 lja [OPTIONS] shell [-- SHELL_ARGS...]
 lja [OPTIONS] config
 lja [OPTIONS] status
-lja [OPTIONS] stop
+lja [OPTIONS] stop [-a|--all]
+lja [OPTIONS] delete [-a|--all]
 lja [OPTIONS] update AGENT
-lja [-v] stop-all
 ```
 
 Useful examples:
@@ -67,7 +67,9 @@ lja --project ~/src/example --with-agent claude --with-agent opencode codex
 lja --project ~/src/example shell -- make test
 lja --project ~/src/example status
 lja --project ~/src/example stop
-lja stop-all
+lja stop --all
+lja --project ~/src/example delete
+lja delete -a
 ```
 
 Options before the command select the project and storage:
@@ -123,8 +125,13 @@ the project. The selected state root is used consistently for all agents:
 | OpenCode | `<state-root>/.opencode` plus isolated XDG config/data/state/cache paths |
 
 `status` only inspects and validates the VM. `stop` is a successful no-op for
-an absent or already stopped project VM. `stop-all` affects only VMs in the
-`lja-` namespace and does not need a project or state selection.
+an absent or already stopped project VM. `stop --all` and `delete --all` affect
+only VMs in the `lja-` namespace and do not need a project or state selection.
+
+`delete` runs `limactl delete -f` and succeeds if the project VM is already
+absent. It works even when existing mounts differ from the current storage
+configuration. Deletion removes the VM and its guest disk; host project files
+and agent state are preserved. Both bulk commands also accept `-a`.
 
 ## Development configuration
 

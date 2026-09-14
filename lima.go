@@ -424,3 +424,47 @@ func StopAllVMs(limactlCommand string) error {
 	}
 	return nil
 }
+
+func DeleteVM(project string, limactlCommand string) error {
+	vmName, err := projectVMName(project)
+	if err != nil {
+		return err
+	}
+	instance, err := inspectLima(vmName, limactlCommand)
+	if err != nil {
+		return err
+	}
+	if instance != nil {
+		return instance.delete(limactlCommand)
+	}
+	return reportAbsentVM(vmName)
+}
+
+func DeleteAllVMs(limactlCommand string) error {
+	instances, err := ljaInstances(limactlCommand)
+	if err != nil {
+		return err
+	}
+	for _, instance := range instances {
+		if err := instance.delete(limactlCommand); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (instance LimaInstance) delete(limactlCommand string) error {
+	slog.Info("deleting VM", "vm", instance.Name)
+	options := defaultProcessOptions(limactlCommand)
+	if _, err := runLima([]string{"delete", "-f", instance.Name}, options); err != nil {
+		return err
+	}
+	return reportAbsentVM(instance.Name)
+}
+
+func reportAbsentVM(vmName string) error {
+	if _, err := fmt.Printf("vm: %s\nstatus: Absent\n", vmName); err != nil {
+		return ljaError("cannot report deleted VM %s: %w", vmName, err)
+	}
+	return nil
+}

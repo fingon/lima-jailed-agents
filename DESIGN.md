@@ -22,7 +22,7 @@ small executable entry point in `cmd/lja`.
 | `path.go` | Canonical paths, VM identity, environment and path safety |
 | `config.go` | Layered development configuration and environment resolution |
 | `process.go` | Raw host and guest process boundaries |
-| `lima.go` | Lima JSON parsing, exact mounts, lifecycle, and stop-all |
+| `lima.go` | Lima JSON parsing, exact mounts, lifecycle, and bulk operations |
 | `lock.go` | Host advisory locks, state roots, directories, and instructions |
 | `git.go` | Recursive host Git configuration copying |
 | `codex.go` | Conservative Codex TOML trust editing |
@@ -59,9 +59,9 @@ Lima is queried at most once during a discovery walk. A failed query or malforme
 response is an error, not an absent VM. A project configuration is not merged
 from ancestors after discovery. Git roots are not special.
 
-`stop-all` is dispatched before project resolution, configuration loading, or
-state selection. This makes it usable from outside a project and prevents an
-unrelated current directory from affecting it.
+`stop --all` and `delete --all` are dispatched before project resolution,
+configuration loading, or state selection. This makes them usable from outside a project and prevents an
+unrelated current directory from affecting them.
 
 ## Deterministic identity
 
@@ -111,7 +111,7 @@ array and JSON-lines output. The parser validates instance names, statuses,
 configuration objects, mount arrays, mount locations, mount points, and
 writable values. Unknown statuses are rejected when an instance is inspected.
 
-For a project operation the lifecycle is:
+For project VM preparation the lifecycle is:
 
 1. Resolve the exact project and selected state root.
 2. Calculate the expected canonical writable mount set.
@@ -128,6 +128,16 @@ The expected mount set is exact: no extra mounts, no duplicate entries, no
 read-only project/state mount, and no mount at a different guest path. A
 mismatch is actionable and never triggers deletion or migration. `status` and
 `stop` use the same validation without creating or starting a VM.
+
+`delete` discovers the project and inspects its deterministic VM name without
+loading development configuration, resolving storage, or validating mounts. An
+absent VM is a successful no-op. Existing VMs are deleted with
+`limactl delete -f <name>`, including broken, installing, and uninitialized VMs.
+`delete --all` selects the `lja-` namespace, processes VMs sequentially, and
+stops on the first failure. Unknown statuses and malformed listings are errors.
+Deletion reports `status: Absent` after success and preserves host files and
+agent state. Deletion does not acquire LJA advisory locks, matching bulk stop.
+Both bulk commands accept `-a`; the former `stop-all` command is removed.
 
 ## Process boundary
 
@@ -186,7 +196,7 @@ VM. A passthrough name must exist, while an explicit `env` value takes
 precedence and may intentionally be empty. The resolved values are sent only
 to setup and the selected guest command. They are not written to wrappers,
 configuration output, or LJA logs. `config`, `status`, and `stop` do not require
-passthrough variables; `stop-all` skips development configuration entirely.
+passthrough variables; bulk stop and delete skip development configuration entirely.
 
 `lja config` will emit deterministic YAML with two-space indentation and a
 trailing newline, including empty collections and the existing effective

@@ -9,8 +9,17 @@ import (
 	"github.com/alecthomas/kong"
 )
 
+const (
+	stopCommandName   = "stop"
+	deleteCommandName = "delete"
+)
+
 type passthroughCommand struct {
 	Arguments []string `arg:"" optional:"" passthrough:"all" help:"arguments forwarded to the guest command"`
+}
+
+type lifecycleCommand struct {
+	All bool `name:"all" short:"a" help:"apply to all LJA VMs"`
 }
 
 type updateCommand struct {
@@ -30,8 +39,8 @@ type CLI struct {
 	Shell    passthroughCommand `cmd:"" optional:"" help:"open a shell in the project VM"`
 	Config   struct{}           `cmd:"" optional:"" help:"show resolved development configuration"`
 	Status   struct{}           `cmd:"" optional:"" help:"show project VM status"`
-	Stop     struct{}           `cmd:"" optional:"" help:"stop the project VM"`
-	StopAll  struct{}           `cmd:"" optional:"" name:"stop-all" help:"stop all LJA VMs"`
+	Stop     lifecycleCommand   `cmd:"" optional:"" help:"stop the project VM or all LJA VMs"`
+	Delete   lifecycleCommand   `cmd:"" optional:"" help:"force-delete the project VM or all LJA VMs"`
 	Update   updateCommand      `cmd:"" optional:"" help:"update one installed agent"`
 	Help     struct{}           `cmd:"" default:"1" hidden:"" help:"show help"`
 }
@@ -87,19 +96,26 @@ func configureLogging(verbose bool) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, options)))
 }
 
+func (cli *CLI) allVMs(command string) bool {
+	return command == stopCommandName && cli.Stop.All || command == deleteCommandName && cli.Delete.All
+}
+
 func runCommand(cli *CLI, command string, project string, workingDirectory string) (int, error) {
 	preparedAgents, err := requestedAgents(cli, command)
 	if err != nil {
 		return 0, err
 	}
-	if command == "stop-all" {
-		if err := StopAllVMs(limaCtlCommand); err != nil {
-			return 0, err
+	if cli.allVMs(command) {
+		if command == deleteCommandName {
+			return 0, DeleteAllVMs(limaCtlCommand)
 		}
-		return 0, nil
+		return 0, StopAllVMs(limaCtlCommand)
 	}
 	if project == "" {
 		return 0, ljaError("%s requires a project", command)
+	}
+	if command == deleteCommandName {
+		return 0, DeleteVM(project, limaCtlCommand)
 	}
 	environment := environmentMap()
 	development, err := loadDevelopmentConfig(project, environment, "")
@@ -126,7 +142,7 @@ func runCommand(cli *CLI, command string, project string, workingDirectory strin
 		}
 		return 0, nil
 	}
-	if command == "stop" {
+	if command == stopCommandName {
 		if err := StopVM(project, stateRoot, limaCtlCommand, ""); err != nil {
 			return 0, err
 		}
@@ -199,7 +215,7 @@ func Main(arguments []string) int {
 		return 0
 	}
 	configureLogging(cli.Verbose)
-	if command == "stop-all" {
+	if cli.allVMs(command) {
 		status, runErr := runCommand(&cli, command, "", "")
 		if runErr != nil {
 			fmt.Fprintf(os.Stderr, "%s: error: %v\n", programName, runErr)
