@@ -14,15 +14,58 @@ import (
 )
 
 const (
-	processPipeWaitTimeout = time.Second
-	limaCtlCommand         = "limactl"
-	limaNoninteractiveFlag = "--tty=false"
-	limaWorkdirFlag        = "--workdir"
-	shellCommand           = "sh"
-	shellCommandFlag       = "-c"
-	guestConnectionProbe   = "true"
-	guestCommandProbe      = "command"
-	guestCommandProbeFlag  = "-v"
+	processPipeWaitTimeout   = time.Second
+	limaCtlCommand           = "limactl"
+	limaNoninteractiveFlag   = "--tty=false"
+	limaWorkdirFlag          = "--workdir"
+	shellCommand             = "sh"
+	shellCommandFlag         = "-c"
+	guestConnectionProbe     = "true"
+	guestCommandProbe        = "command"
+	guestCommandProbeFlag    = "-v"
+	guestPathBootstrapScript = `set -eu
+PATH="${PATH-}"
+export PATH
+
+prepend_path() {
+    if [ -z "$1" ]; then
+        return 0
+    fi
+    case ":$PATH:" in
+        *":$1:"*) ;;
+        *)
+            if [ -n "$PATH" ]; then
+                PATH="$1:$PATH"
+            else
+                PATH="$1"
+            fi
+            ;;
+    esac
+}
+
+if [ -n "${HOME-}" ]; then
+    prepend_path "$HOME/.local/bin"
+    prepend_path "$HOME/go/bin"
+fi
+prepend_path "${PIPX_BIN_DIR-}"
+prepend_path "${GOBIN-}"
+if [ -n "${GOPATH-}" ]; then
+    guest_gopath="${GOPATH%%:*}"
+    prepend_path "$guest_gopath/bin"
+fi
+if command -v go >/dev/null 2>&1; then
+    guest_gobin="$(go env GOBIN)" || exit $?
+    if [ -n "$guest_gobin" ]; then
+        prepend_path "$guest_gobin"
+    else
+        guest_gopath="$(go env GOPATH)" || exit $?
+        guest_gopath="${guest_gopath%%:*}"
+        prepend_path "$guest_gopath/bin"
+    fi
+fi
+export PATH
+exec "$@"
+`
 )
 
 type ProcessResult struct {
@@ -118,6 +161,11 @@ func processOutput(result ProcessResult) string {
 	return strings.Join(parts, "\n")
 }
 
+func guestArgumentsWithUserPath(arguments []string) []string {
+	wrapped := []string{shellCommand, shellCommandFlag, guestPathBootstrapScript, programName}
+	return append(wrapped, arguments...)
+}
+
 func runGuest(project string, vmName string, arguments []string, options processOptions, environment map[string]string) (ProcessResult, error) {
 	if len(arguments) == 0 {
 		return ProcessResult{}, ljaError("cannot run an empty guest command")
@@ -149,7 +197,7 @@ func runGuest(project string, vmName string, arguments []string, options process
 	}
 	limaArguments = append(limaArguments, limaWorkdirFlag, canonicalProject, vmName)
 	limaArguments = append(limaArguments, environmentArguments...)
-	limaArguments = append(limaArguments, arguments...)
+	limaArguments = append(limaArguments, guestArgumentsWithUserPath(arguments)...)
 	return runLima(limaArguments, options)
 }
 

@@ -98,7 +98,7 @@ func runVMProcess() error {
 		if len(arguments) <= guestArgumentIndex {
 			return fmt.Errorf("missing fake guest command")
 		}
-		guestArguments = arguments[guestArgumentIndex:]
+		guestArguments = unwrapGuestPathArguments(arguments[guestArgumentIndex:])
 	}
 	if operation == "list" {
 		instances := make([]testVM, 0, len(database.VMs))
@@ -246,7 +246,15 @@ func runVMProcess() error {
 }
 
 func isPackageInstallationCommand(arguments []string) bool {
+	arguments = unwrapGuestPathArguments(arguments)
 	return len(arguments) >= 4 && arguments[0] == shellCommand && arguments[1] == "-eu" && arguments[2] == shellCommandFlag && strings.Contains(arguments[3], aptGetCommand+" "+installCommand)
+}
+
+func unwrapGuestPathArguments(arguments []string) []string {
+	if len(arguments) >= 4 && arguments[0] == shellCommand && arguments[1] == shellCommandFlag && arguments[2] == guestPathBootstrapScript && arguments[3] == programName {
+		return arguments[4:]
+	}
+	return arguments
 }
 
 func vmFixture(t *testing.T, status string) (string, string, WorkflowOptions) {
@@ -340,7 +348,8 @@ func TestPreparationBatchesGuestPackages(t *testing.T) {
 				}
 			}
 			assert.Equal(t, len(installations), 1)
-			assert.Equal(t, installations[0][7], test.wantScript)
+			guestArguments := unwrapGuestPathArguments(installations[0][4:])
+			assert.Equal(t, guestArguments[3], test.wantScript)
 		})
 	}
 }
@@ -371,7 +380,8 @@ func TestPreparationSkipsReadyAndEmptyGuestPackages(t *testing.T) {
 			packageQueries := 0
 			installations := 0
 			for _, operation := range database.Operations {
-				if len(operation) >= 5 && operation[4] == "dpkg-query" {
+				guestArguments := unwrapGuestPathArguments(operation[4:])
+				if len(guestArguments) >= 1 && guestArguments[0] == "dpkg-query" {
 					packageQueries++
 				}
 				if len(operation) >= 8 && isPackageInstallationCommand(operation[4:]) {
@@ -434,10 +444,25 @@ func TestMakeCommandPassesThroughGuestArgumentsAndExitStatus(t *testing.T) {
 			database, err := readVMDatabase()
 			assert.NilError(t, err)
 			assert.DeepEqual(t, database.Operations[len(database.Operations)-1], []string{
-				"shell", "--workdir", project, vmName, "make", "-f", "Makefile", "target with spaces",
+				"shell", "--workdir", project, vmName, shellCommand, shellCommandFlag, guestPathBootstrapScript, programName,
+				"make", "-f", "Makefile", "target with spaces",
 			})
 		})
 	}
+}
+
+func TestInteractiveShellUsesGuestPathBootstrap(t *testing.T) {
+	project, vmName, options := vmFixture(t, limaStatusRunning)
+	code, err := OpenShell(project, nil, "", options)
+	assert.NilError(t, err)
+	assert.Equal(t, code, 0)
+
+	database, err := readVMDatabase()
+	assert.NilError(t, err)
+	assert.DeepEqual(t, database.Operations[len(database.Operations)-1], []string{
+		"shell", "--workdir", project, vmName, shellCommand, shellCommandFlag, guestPathBootstrapScript, programName,
+		shellCommand, shellCommandFlag, "exec \"${SHELL:-/bin/sh}\" -l",
+	})
 }
 
 func TestCreateVM(t *testing.T) {

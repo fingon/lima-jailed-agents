@@ -811,9 +811,10 @@ func OpenShell(project string, arguments []string, workingDirectory string, opti
 		return 0, err
 	}
 	forwarded := append([]string{}, arguments...)
-	if len(environment) != 0 && len(forwarded) == 0 {
+	if len(forwarded) == 0 {
 		forwarded = []string{shellCommand, shellCommandFlag, `exec "${SHELL:-/bin/sh}" -l`}
 	}
+	forwarded = guestArgumentsWithUserPath(forwarded)
 	limaArguments := []string{"shell", limaWorkdirFlag, workingDirectory, instance.Name}
 	limaArguments = append(limaArguments, environmentArguments...)
 	limaArguments = append(limaArguments, forwarded...)

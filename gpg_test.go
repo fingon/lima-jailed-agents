@@ -415,7 +415,7 @@ func runGPGProcess() error {
 				environment[key] = value
 				index++
 			}
-			guest := arguments[index:]
+			guest := unwrapGuestPathArguments(arguments[index:])
 			home := environment[gpgHomeEnv]
 			if len(guest) > 0 {
 				switch guest[0] {

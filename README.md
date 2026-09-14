@@ -52,6 +52,12 @@ make install
 LJA requires an installed `limactl`. Agent packages and development packages
 are installed inside the guest, not on the host.
 
+Guest commands preserve the guest `PATH` and add user-installed executable
+directories, including `$HOME/.local/bin` for pipx and Go's effective
+`GOBIN` or `GOPATH/bin`. This applies to `lja shell`,
+`lja make`, setup commands, and agent launches; host PATH settings are
+not passed into the VM.
+
 ## Commands
 
 ```text

@@ -505,7 +505,7 @@ func TestGuestProcessPreservesArgumentAndEnvironmentBoundaries(t *testing.T) {
 	assert.NilError(t, os.Mkdir(project, 0o755))
 	logPath := filepath.Join(root, "arguments.log")
 	commandPath := filepath.Join(root, "fake-limactl")
-	command := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + shellQuote(logPath) + "\nexit 23\n"
+	command := "#!/bin/sh\nprintf '%s\\0' \"$@\" > " + shellQuote(logPath) + "\nexit 23\n"
 	assert.NilError(t, os.WriteFile(commandPath, []byte(command), 0o755))
 
 	options := defaultProcessOptions(commandPath)
@@ -519,7 +519,7 @@ func TestGuestProcessPreservesArgumentAndEnvironmentBoundaries(t *testing.T) {
 	assert.Equal(t, result.ExitCode, 23)
 	encoded, err := os.ReadFile(logPath)
 	assert.NilError(t, err)
-	actual := strings.Split(strings.TrimSuffix(string(encoded), "\n"), "\n")
+	actual := strings.Split(strings.TrimSuffix(string(encoded), "\x00"), "\x00")
 	assert.DeepEqual(t, actual, []string{
 		"shell",
 		"--workdir",
@@ -527,6 +527,10 @@ func TestGuestProcessPreservesArgumentAndEnvironmentBoundaries(t *testing.T) {
 		"lja-test",
 		"A_VALUE=literal;value",
 		"Z_VALUE=value with spaces",
+		shellCommand,
+		shellCommandFlag,
+		guestPathBootstrapScript,
+		programName,
 		"printf",
 		"$(touch nope);",
 		"word with spaces",
@@ -624,6 +628,9 @@ if [ "$1" != "shell" ]; then
     exit 99
 fi
 shift 4
+if [ "$1" = "sh" ] && [ "$2" = "-c" ] && [ "$4" = "lja" ]; then
+    shift 4
+fi
 case "$1" in
     true)
         exit 0
@@ -667,6 +674,9 @@ case "$1" in
         ;;
     CODEX_HOME=*)
         shift
+        if [ "$1" = "sh" ] && [ "$2" = "-c" ] && [ "$4" = "lja" ]; then
+            shift 4
+        fi
         if [ "$1" = "codex" ]; then
             exit 17
         fi

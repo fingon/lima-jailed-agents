@@ -217,6 +217,16 @@ standard streams. Captured probes distinguish a missing command from a failed
 guest connection and include output in failures without logging arbitrary
 environment values or prompts.
 
+Every guest command is run through an invocation-scoped POSIX bootstrap that
+preserves the guest `PATH` and prepends `$HOME/.local/bin`,
+`$HOME/go/bin`, `PIPX_BIN_DIR`, `GOBIN`, and the first
+`GOPATH` entry's `bin` directory when present. If Go is
+available, its effective `GOBIN` or `GOPATH` from
+`go env` is also added. This applies equally to direct commands,
+setup, package and executable probes, GPG operations, interactive shells, and
+agent launches. Host paths are never copied into the guest environment, and
+guest profiles are not modified.
+
 ## Development configuration
 
 The global file is `${XDG_CONFIG_HOME:-~/.config}/lja/config.yaml`; the project
