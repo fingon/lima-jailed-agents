@@ -12,8 +12,27 @@ func DiscoverProject(directory string, limactlCommand string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	policy, err := newProjectDirectoryPolicy()
+	if err != nil {
+		return "", err
+	}
+	return policy.discover(canonicalDirectory, limactlCommand)
+}
+
+func (policy projectDirectoryPolicy) discover(canonicalDirectory string, limactlCommand string) (string, error) {
 	vmNames := map[string]bool(nil)
 	for candidate := canonicalDirectory; ; candidate = filepath.Dir(candidate) {
+		reason, err := policy.rejection(candidate)
+		if err != nil {
+			return "", err
+		}
+		if reason != "" {
+			if candidate == canonicalDirectory {
+				return "", ljaError("%s: %s", reason, candidate)
+			}
+			slog.Debug("stopping project discovery", "directory", candidate, "reason", reason)
+			return canonicalDirectory, nil
+		}
 		configPath := filepath.Join(candidate, projectConfigName)
 		info, statErr := os.Stat(configPath)
 		hasConfig := false

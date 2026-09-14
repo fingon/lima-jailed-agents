@@ -89,7 +89,9 @@ options always take precedence.
 
 When `--project` is omitted, LJA starts at the canonical current directory and
 searches upward for the nearest `.lja.yaml` or deterministic LJA VM. If no
-marker is found, the current directory is used. There is no automatic Git-root
+marker is found, the current directory is used. Discovery stops before your home
+directory or any directory owned by another user. Container bases must be owned
+by you and must not be your home directory, including with `--project`. There is no automatic Git-root
 discovery. The current invocation directory remains the guest working directory
 even when an ancestor is selected as the project root.
 

@@ -46,6 +46,15 @@ in their interpretation.
 `--project` selects one exact directory. Otherwise, the canonical current
 directory is retained as the launch directory while discovery checks that
 directory and each parent for the nearest `.lja.yaml` or deterministic VM name.
+Candidates are checked before inspecting configuration or matching a VM: discovery
+stops before the canonical user home directory or a directory not owned by the
+process's real user ID. An unsafe starting directory is an error; an unsafe
+ancestor ends the search, falling back to the starting directory. Symlinks are
+resolved before comparison. Filesystem inspection failures are errors.
+Container preparation validates the selected base before acquiring locks and
+again before Lima operations, including reuse of running VMs. Explicit project
+selection cannot bypass these checks. Explicit status and stop remain available
+for existing VMs.
 Lima is queried at most once during a discovery walk. A failed query or malformed
 response is an error, not an absent VM. A project configuration is not merged
 from ancestors after discovery. Git roots are not special.

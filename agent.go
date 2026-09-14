@@ -274,6 +274,9 @@ func PrepareVM(project string, options WorkflowOptions) (LimaInstance, error) {
 	if err != nil {
 		return LimaInstance{}, err
 	}
+	if err := validateProjectDirectory(canonicalProject); err != nil {
+		return LimaInstance{}, err
+	}
 	vmName, err := projectVMName(canonicalProject)
 	if err != nil {
 		return LimaInstance{}, err
@@ -300,6 +303,9 @@ func InstallAgent(project string, agentName string, update bool, options Workflo
 	}
 	agent, err := agentSpec(agentName)
 	if err != nil {
+		return LimaInstance{}, err
+	}
+	if err := validateProjectDirectory(canonicalProject); err != nil {
 		return LimaInstance{}, err
 	}
 	vmName, err := projectVMName(canonicalProject)
@@ -489,6 +495,9 @@ func prepareAgents(project string, selectedAgent string, withAgents []string, tr
 	}
 	agentNames, err := normalizeAgentNames(selectedAgent, withAgents)
 	if err != nil {
+		return LimaInstance{}, err
+	}
+	if err := validateProjectDirectory(canonicalProject); err != nil {
 		return LimaInstance{}, err
 	}
 	vmName, err := projectVMName(canonicalProject)

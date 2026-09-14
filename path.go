@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 )
 
 const (
@@ -314,4 +315,62 @@ func environmentMap() map[string]string {
 		}
 	}
 	return values
+}
+
+type projectDirectoryPolicy struct {
+	home string
+	uid  int
+	stat func(string) (os.FileInfo, error)
+}
+
+func newProjectDirectoryPolicy() (projectDirectoryPolicy, error) {
+	home, err := homeDirectory()
+	if err != nil {
+		return projectDirectoryPolicy{}, err
+	}
+	home, err = canonicalPath(home)
+	if err != nil {
+		return projectDirectoryPolicy{}, err
+	}
+	return projectDirectoryPolicy{home: home, uid: os.Getuid(), stat: os.Stat}, nil
+}
+
+func (policy projectDirectoryPolicy) rejection(directory string) (string, error) {
+	if directory == policy.home {
+		return "project must not be the user home directory", nil
+	}
+	info, err := policy.stat(directory)
+	if err != nil {
+		return "", ljaError("cannot inspect project directory %s: %w", directory, err)
+	}
+	if !info.IsDir() {
+		return "project is not a directory", nil
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return "", ljaError("cannot determine project directory owner: %s", directory)
+	}
+	if uint64(stat.Uid) != uint64(policy.uid) {
+		return "project directory is not owned by the current user", nil
+	}
+	return "", nil
+}
+
+func validateProjectDirectory(directory string) error {
+	canonical, err := canonicalProjectPath(directory)
+	if err != nil {
+		return err
+	}
+	policy, err := newProjectDirectoryPolicy()
+	if err != nil {
+		return err
+	}
+	reason, err := policy.rejection(canonical)
+	if err != nil {
+		return err
+	}
+	if reason != "" {
+		return ljaError("%s: %s", reason, canonical)
+	}
+	return nil
 }

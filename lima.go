@@ -301,6 +301,9 @@ func mountArguments(paths []string) ([]string, error) {
 }
 
 func prepareVMLocked(project string, stateRoot string, development *DevelopmentConfig, environment map[string]string, limactlCommand string) (LimaInstance, error) {
+	if err := validateProjectDirectory(project); err != nil {
+		return LimaInstance{}, err
+	}
 	mountPaths, err := expectedMountPaths(project, stateRoot)
 	if err != nil {
 		return LimaInstance{}, err
