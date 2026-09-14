@@ -108,3 +108,19 @@ func TestGuestPathBootstrap(t *testing.T) {
 		})
 	}
 }
+
+func TestGuestPathBootstrapRunsCommandProbe(t *testing.T) {
+	root := t.TempDir()
+	executable := filepath.Join(root, codexAgentName)
+	assert.NilError(t, os.WriteFile(executable, []byte("#!/bin/sh\n"), 0o755))
+
+	commandArguments := []string{shellCommandFlag, guestPathBootstrapScript, programName, guestCommandProbe, guestCommandProbeFlag, codexAgentName}
+	command := exec.Command("/bin/sh", commandArguments...)
+	command.Env = []string{"PATH=" + root}
+	output, err := command.Output()
+	assert.NilError(t, err)
+	if err != nil {
+		return
+	}
+	assert.Equal(t, string(output), executable+"\n")
+}
