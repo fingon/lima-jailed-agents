@@ -2,15 +2,19 @@ package lja
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
 	"sort"
 	"strings"
+	"time"
 )
 
 const (
+	processPipeWaitTimeout = time.Second
 	limaCtlCommand         = "limactl"
 	limaNoninteractiveFlag = "--tty=false"
 	limaWorkdirFlag        = "--workdir"
@@ -28,6 +32,7 @@ type ProcessResult struct {
 }
 
 type processOptions struct {
+	context       context.Context
 	command       string
 	captureOutput bool
 	check         bool
@@ -35,8 +40,12 @@ type processOptions struct {
 	hasInput      bool
 }
 
-func defaultProcessOptions(command string) processOptions {
-	return processOptions{command: command, check: true}
+func defaultProcessOptions(command string, contexts ...context.Context) processOptions {
+	options := processOptions{command: command, check: true}
+	if len(contexts) > 0 {
+		options.context = contexts[0]
+	}
+	return options
 }
 
 func runLima(arguments []string, options processOptions) (ProcessResult, error) {
@@ -48,7 +57,14 @@ func runLima(arguments []string, options processOptions) (ProcessResult, error) 
 		command = limaCtlCommand
 	}
 	slog.Debug("running Lima operation", "operation", arguments[0])
-	cmd := exec.Command(command, arguments...)
+	ctx := options.context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cmd := exec.CommandContext(ctx, command, arguments...)
+	if options.context != nil {
+		cmd.WaitDelay = processPipeWaitTimeout
+	}
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	if options.captureOutput {
@@ -64,6 +80,9 @@ func runLima(arguments []string, options processOptions) (ProcessResult, error) 
 		cmd.Stdin = os.Stdin
 	}
 	runErr := cmd.Run()
+	if ctx.Err() != nil {
+		return ProcessResult{}, fmt.Errorf("Lima operation canceled: %w", context.Cause(ctx))
+	}
 	result := ProcessResult{Stdout: stdout.Bytes(), Stderr: stderr.Bytes(), ExitCode: 0}
 	if runErr != nil {
 		var exitError *exec.ExitError
@@ -147,8 +166,8 @@ func guestConnectionError(vmName string, result ProcessResult) error {
 	return ljaError("cannot connect to guest VM %s: exit status %d", vmName, result.ExitCode)
 }
 
-func verifyGuestConnection(project string, vmName string, command string) error {
-	options := defaultProcessOptions(command)
+func verifyGuestConnection(project string, vmName string, command string, contexts ...context.Context) error {
+	options := defaultProcessOptions(command, contexts...)
 	options.captureOutput = true
 	options.check = false
 	result, err := runGuest(project, vmName, []string{guestConnectionProbe}, options, nil)
@@ -161,8 +180,8 @@ func verifyGuestConnection(project string, vmName string, command string) error 
 	return nil
 }
 
-func guestExecutablePath(project string, vmName string, executable string, command string) (string, error) {
-	options := defaultProcessOptions(command)
+func guestExecutablePath(project string, vmName string, executable string, command string, contexts ...context.Context) (string, error) {
+	options := defaultProcessOptions(command, contexts...)
 	options.captureOutput = true
 	options.check = false
 	result, err := runGuest(project, vmName, []string{guestCommandProbe, guestCommandProbeFlag, executable}, options, nil)
@@ -182,7 +201,7 @@ func guestExecutablePath(project string, vmName string, executable string, comma
 		}
 		return executablePath, nil
 	}
-	if err := verifyGuestConnection(project, vmName, command); err != nil {
+	if err := verifyGuestConnection(project, vmName, command, contexts...); err != nil {
 		return "", err
 	}
 	if result.ExitCode == 1 {
@@ -195,7 +214,7 @@ func guestExecutablePath(project string, vmName string, executable string, comma
 	return "", ljaError("guest command probe for %s failed with exit status %d", executable, result.ExitCode)
 }
 
-func guestExecutableAvailable(project string, vmName string, executable string, command string) (bool, error) {
-	path, err := guestExecutablePath(project, vmName, executable, command)
+func guestExecutableAvailable(project string, vmName string, executable string, command string, contexts ...context.Context) (bool, error) {
+	path, err := guestExecutablePath(project, vmName, executable, command, contexts...)
 	return path != "", err
 }

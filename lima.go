@@ -301,7 +301,7 @@ func mountArguments(paths []string) ([]string, error) {
 	return MountArguments(paths)
 }
 
-func prepareNamedVMLocked(project string, vmName string, stateRoot string, development *DevelopmentConfig, environment map[string]string, limactlCommand string) (LimaInstance, error) {
+func prepareNamedVMLocked(project string, vmName string, stateRoot string, development *DevelopmentConfig, environment map[string]string, limactlCommand string, workflows ...*gpgWorkflow) (LimaInstance, error) {
 	if err := validateProjectDirectory(project); err != nil {
 		return LimaInstance{}, err
 	}
@@ -373,7 +373,7 @@ func prepareNamedVMLocked(project string, vmName string, stateRoot string, devel
 	if instance.Status != limaStatusRunning {
 		return LimaInstance{}, ljaError("VM %s did not reach Running state; current state is %s", vmName, instance.Status)
 	}
-	if err := prepareDevelopment(project, vmName, development, environment, limactlCommand); err != nil {
+	if err := prepareDevelopment(project, vmName, development, environment, limactlCommand, workflows...); err != nil {
 		return LimaInstance{}, err
 	}
 	return *instance, nil

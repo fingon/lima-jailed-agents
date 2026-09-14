@@ -1,3 +1,4 @@
+gpg_forwarding: false
 lima: {}
 packages:
   - ninja-build

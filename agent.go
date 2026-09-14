@@ -1,6 +1,7 @@
 package lja
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -100,6 +101,7 @@ func NormalizeAgentNames(selected string, additional []string) ([]string, error)
 }
 
 type WorkflowOptions struct {
+	gpg           *gpgWorkflow
 	Recreate      bool
 	StateRoot     string
 	Development   *DevelopmentConfig
@@ -148,6 +150,9 @@ func guestPackageInstalled(project string, vmName string, packageName string, li
 
 func effectiveDevelopmentPackages(config DevelopmentConfig) []string {
 	packages := append([]string{}, config.Packages...)
+	if config.GPGForwarding {
+		packages = append(packages, gpgPackage)
+	}
 	if config.CopyGitConfig {
 		packages = append(packages, gitCommand)
 	}
@@ -207,19 +212,19 @@ func ensureGuestPackages(project string, vmName string, packageNames []string, l
 	return nil
 }
 
-func ensureNodeRuntime(project string, vmName string, limactlCommand string) error {
-	nodeAvailable, err := guestExecutableAvailable(project, vmName, snapNodePackage, limactlCommand)
+func ensureNodeRuntime(project string, vmName string, limactlCommand string, contexts ...context.Context) error {
+	nodeAvailable, err := guestExecutableAvailable(project, vmName, snapNodePackage, limactlCommand, contexts...)
 	if err != nil {
 		return err
 	}
-	npmAvailable, err := guestExecutableAvailable(project, vmName, npmCommand, limactlCommand)
+	npmAvailable, err := guestExecutableAvailable(project, vmName, npmCommand, limactlCommand, contexts...)
 	if err != nil {
 		return err
 	}
 	if nodeAvailable && npmAvailable {
 		return nil
 	}
-	snapAvailable, err := guestExecutableAvailable(project, vmName, snapCommand, limactlCommand)
+	snapAvailable, err := guestExecutableAvailable(project, vmName, snapCommand, limactlCommand, contexts...)
 	if err != nil {
 		return err
 	}
@@ -227,12 +232,12 @@ func ensureNodeRuntime(project string, vmName string, limactlCommand string) err
 		return ljaError("guest prerequisite %s is missing in VM %s", snapCommand, vmName)
 	}
 	slog.Info("installing Node", "vm", vmName)
-	options := defaultProcessOptions(limactlCommand)
+	options := defaultProcessOptions(limactlCommand, contexts...)
 	if _, err := runGuest(project, vmName, []string{sudoCommand, snapCommand, "install", snapNodePackage, snapClassicFlag}, options, nil); err != nil {
 		return err
 	}
 	for _, executable := range []string{snapNodePackage, npmCommand} {
-		available, err := guestExecutableAvailable(project, vmName, executable, limactlCommand)
+		available, err := guestExecutableAvailable(project, vmName, executable, limactlCommand, contexts...)
 		if err != nil {
 			return err
 		}
@@ -243,18 +248,18 @@ func ensureNodeRuntime(project string, vmName string, limactlCommand string) err
 	return nil
 }
 
-func installAgentPackage(project string, vmName string, agent AgentSpec, limactlCommand string) error {
+func installAgentPackage(project string, vmName string, agent AgentSpec, limactlCommand string, contexts ...context.Context) error {
 	slog.Info("installing agent", "agent", agent.Name, "package", agent.Package, "vm", vmName)
-	options := defaultProcessOptions(limactlCommand)
+	options := defaultProcessOptions(limactlCommand, contexts...)
 	_, err := runGuest(project, vmName, []string{sudoCommand, npmCommand, installCommand, npmGlobalFlag, agent.Package}, options, nil)
 	return err
 }
 
-func installAgentLocked(project string, vmName string, agent AgentSpec, update bool, limactlCommand string) (string, error) {
-	if err := verifyGuestConnection(project, vmName, limactlCommand); err != nil {
+func installAgentLocked(project string, vmName string, agent AgentSpec, update bool, limactlCommand string, contexts ...context.Context) (string, error) {
+	if err := verifyGuestConnection(project, vmName, limactlCommand, contexts...); err != nil {
 		return "", err
 	}
-	executablePath, err := guestExecutablePath(project, vmName, agent.Executable, limactlCommand)
+	executablePath, err := guestExecutablePath(project, vmName, agent.Executable, limactlCommand, contexts...)
 	if err != nil {
 		return "", err
 	}
@@ -262,13 +267,13 @@ func installAgentLocked(project string, vmName string, agent AgentSpec, update b
 		slog.Debug("reusing installed agent", "agent", agent.Name, "vm", vmName)
 		return executablePath, nil
 	}
-	if err := ensureNodeRuntime(project, vmName, limactlCommand); err != nil {
+	if err := ensureNodeRuntime(project, vmName, limactlCommand, contexts...); err != nil {
 		return "", err
 	}
-	if err := installAgentPackage(project, vmName, agent, limactlCommand); err != nil {
+	if err := installAgentPackage(project, vmName, agent, limactlCommand, contexts...); err != nil {
 		return "", err
 	}
-	executablePath, err = guestExecutablePath(project, vmName, agent.Executable, limactlCommand)
+	executablePath, err = guestExecutablePath(project, vmName, agent.Executable, limactlCommand, contexts...)
 	if err != nil {
 		return "", err
 	}
@@ -278,19 +283,37 @@ func installAgentLocked(project string, vmName string, agent AgentSpec, update b
 	return executablePath, nil
 }
 
-func prepareDevelopment(project string, vmName string, config *DevelopmentConfig, environment map[string]string, limactlCommand string) error {
+func prepareDevelopment(project string, vmName string, config *DevelopmentConfig, environment map[string]string, limactlCommand string, workflows ...*gpgWorkflow) (returnErr error) {
 	actualConfig := developmentConfigOrDefault(config)
+	var workflow *gpgWorkflow
+	if len(workflows) > 0 {
+		workflow = workflows[0]
+	}
+	if actualConfig.GPGForwarding && workflow == nil {
+		options := WorkflowOptions{Development: &actualConfig, Environment: environment}
+		cleanup, err := options.ownGPGWorkflow()
+		if err != nil {
+			return err
+		}
+		defer cleanup(&returnErr)
+		workflow = options.gpg
+	}
 	if err := ensureGuestPackages(project, vmName, effectiveDevelopmentPackages(actualConfig), limactlCommand); err != nil {
 		return err
 	}
 	if actualConfig.CopyGitConfig {
-		if err := prepareGit(project, vmName, limactlCommand); err != nil {
+		if err := prepareGit(project, vmName, limactlCommand, actualConfig.GPGForwarding); err != nil {
 			return err
 		}
 	}
+	var err error
+	environment, err = workflow.environment(project, vmName, limactlCommand, environment)
+	if err != nil {
+		return err
+	}
 	for _, setup := range actualConfig.Setup {
 		slog.Info("running setup", "source", setup.Source, "command_index", setup.Index, "vm", vmName)
-		options := defaultProcessOptions(limactlCommand)
+		options := workflow.processOptions(limactlCommand)
 		if _, err := runGuest(project, vmName, []string{shellCommand, "-eu", shellCommandFlag, setup.Command}, options, environment); err != nil {
 			return ljaError("setup %s command %d failed: %w", setup.Source, setup.Index, err)
 		}
@@ -298,7 +321,13 @@ func prepareDevelopment(project string, vmName string, config *DevelopmentConfig
 	return nil
 }
 
-func PrepareVM(project string, options WorkflowOptions) (LimaInstance, error) {
+func PrepareVM(project string, options WorkflowOptions) (returnedInstance LimaInstance, returnErr error) {
+	cleanup, err := options.ownGPGWorkflow()
+	if err != nil {
+		return LimaInstance{}, err
+	}
+	defer cleanup(&returnErr)
+
 	canonicalProject, err := canonicalProjectPath(project)
 	if err != nil {
 		return LimaInstance{}, err
@@ -325,7 +354,13 @@ func PrepareVM(project string, options WorkflowOptions) (LimaInstance, error) {
 	return returnValue, nil
 }
 
-func InstallAgent(project string, agentName string, update bool, options WorkflowOptions) (LimaInstance, error) {
+func InstallAgent(project string, agentName string, update bool, options WorkflowOptions) (returnedInstance LimaInstance, returnErr error) {
+	cleanup, err := options.ownGPGWorkflow()
+	if err != nil {
+		return LimaInstance{}, err
+	}
+	defer cleanup(&returnErr)
+
 	canonicalProject, err := canonicalProjectPath(project)
 	if err != nil {
 		return LimaInstance{}, err
@@ -347,7 +382,7 @@ func InstallAgent(project string, agentName string, update bool, options Workflo
 		if prepareErr != nil {
 			return prepareErr
 		}
-		if _, installErr := installAgentLocked(canonicalProject, vmName, agent, update, options.limaCommand()); installErr != nil {
+		if _, installErr := installAgentLocked(canonicalProject, vmName, agent, update, options.limaCommand(), options.gpg.context()); installErr != nil {
 			return installErr
 		}
 		returnValue = instance
@@ -517,7 +552,13 @@ func PrepareAgentWrappers(project string, vmName string, stateRoot string, execu
 	return err
 }
 
-func prepareAgents(project string, selectedAgent string, withAgents []string, trustDirectories []string, options WorkflowOptions) (LimaInstance, error) {
+func prepareAgents(project string, selectedAgent string, withAgents []string, trustDirectories []string, options WorkflowOptions) (returnedInstance LimaInstance, returnErr error) {
+	cleanup, err := options.ownGPGWorkflow()
+	if err != nil {
+		return LimaInstance{}, err
+	}
+	defer cleanup(&returnErr)
+
 	canonicalProject, err := canonicalProjectPath(project)
 	if err != nil {
 		return LimaInstance{}, err
@@ -552,7 +593,7 @@ func prepareAgents(project string, selectedAgent string, withAgents []string, tr
 			if agentErr != nil {
 				return ljaError("cannot prepare agent %s in VM %s: %w", agentName, vmName, agentErr)
 			}
-			executablePath, installErr := installAgentLocked(canonicalProject, vmName, agent, false, options.limaCommand())
+			executablePath, installErr := installAgentLocked(canonicalProject, vmName, agent, false, options.limaCommand(), options.gpg.context())
 			if installErr != nil {
 				return ljaError("cannot prepare agent %s in VM %s: %w", agentName, vmName, installErr)
 			}
@@ -632,7 +673,13 @@ func BuildAgentInvocation(agentName string, arguments []string) ([]string, map[s
 	return invocation, environment, nil
 }
 
-func RunAgent(project string, agentName string, arguments []string, withAgents []string, workingDirectory string, options WorkflowOptions) (int, error) {
+func RunAgent(project string, agentName string, arguments []string, withAgents []string, workingDirectory string, options WorkflowOptions) (exitCode int, returnErr error) {
+	cleanup, err := options.ownGPGWorkflow()
+	if err != nil {
+		return 0, err
+	}
+	defer cleanup(&returnErr)
+
 	canonicalProject, err := canonicalProjectPath(project)
 	if err != nil {
 		return 0, err
@@ -696,7 +743,11 @@ func RunAgent(project string, agentName string, arguments []string, withAgents [
 		}
 	}
 	guestArguments = append(guestArguments, invocation...)
-	optionsForGuest := defaultProcessOptions(options.limaCommand())
+	environment, err = options.gpg.environment(canonicalProject, instance.Name, options.limaCommand(), environment)
+	if err != nil {
+		return 0, err
+	}
+	optionsForGuest := options.gpg.processOptions(options.limaCommand())
 	optionsForGuest.check = false
 	result, err := runGuest(workingDirectory, instance.Name, guestArguments, optionsForGuest, environment)
 	if err != nil {
@@ -725,7 +776,13 @@ func sortedEnvironmentArguments(environment map[string]string) ([]string, error)
 	return arguments, nil
 }
 
-func OpenShell(project string, arguments []string, workingDirectory string, options WorkflowOptions) (int, error) {
+func OpenShell(project string, arguments []string, workingDirectory string, options WorkflowOptions) (exitCode int, returnErr error) {
+	cleanup, err := options.ownGPGWorkflow()
+	if err != nil {
+		return 0, err
+	}
+	defer cleanup(&returnErr)
+
 	canonicalProject, err := canonicalProjectPath(project)
 	if err != nil {
 		return 0, err
@@ -738,22 +795,29 @@ func OpenShell(project string, arguments []string, workingDirectory string, opti
 			return 0, err
 		}
 	}
-	environmentArguments, err := sortedEnvironmentArguments(options.Environment)
-	if err != nil {
+	if _, err := sortedEnvironmentArguments(options.Environment); err != nil {
 		return 0, err
 	}
 	instance, err := PrepareVM(canonicalProject, options)
 	if err != nil {
 		return 0, err
 	}
+	environment, err := options.gpg.environment(canonicalProject, instance.Name, options.limaCommand(), options.Environment)
+	if err != nil {
+		return 0, err
+	}
+	environmentArguments, err := sortedEnvironmentArguments(environment)
+	if err != nil {
+		return 0, err
+	}
 	forwarded := append([]string{}, arguments...)
-	if len(options.Environment) != 0 && len(forwarded) == 0 {
+	if len(environment) != 0 && len(forwarded) == 0 {
 		forwarded = []string{shellCommand, shellCommandFlag, `exec "${SHELL:-/bin/sh}" -l`}
 	}
 	limaArguments := []string{"shell", limaWorkdirFlag, workingDirectory, instance.Name}
 	limaArguments = append(limaArguments, environmentArguments...)
 	limaArguments = append(limaArguments, forwarded...)
-	runOptions := defaultProcessOptions(options.limaCommand())
+	runOptions := options.gpg.processOptions(options.limaCommand())
 	runOptions.check = false
 	result, err := runLima(limaArguments, runOptions)
 	if err != nil {

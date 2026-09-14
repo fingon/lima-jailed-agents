@@ -239,7 +239,7 @@ func TestDevelopmentConfigurationYAMLOutputIsDeterministic(t *testing.T) {
 		EnvPassthrough: []string{"TOKEN"},
 		Setup:          []SetupCommand{{Source: "/private/source.yaml", Index: 7, Command: "make dep\nmake build\n"}},
 	}
-	want := "lima: {}\npackages:\n  - make\n  - git\ncopy_git_config: false\nenv:\n  A_FIRST: first\n  Z_LAST: last\nenv_passthrough:\n  - TOKEN\nsetup:\n  - |\n    make dep\n    make build\n"
+	want := "gpg_forwarding: false\nlima: {}\npackages:\n  - make\n  - git\ncopy_git_config: false\nenv:\n  A_FIRST: first\n  Z_LAST: last\nenv_passthrough:\n  - TOKEN\nsetup:\n  - |\n    make dep\n    make build\n"
 	encoded, err := yamlConfiguration(config)
 	assert.NilError(t, err)
 	assert.Equal(t, string(encoded), want)

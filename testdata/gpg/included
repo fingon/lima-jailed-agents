@@ -1,0 +1,4 @@
+[gpg "openpgp"]
+    program = /host/other/gpg
+[gpg "ssh"]
+    program = /host/bin/ssh-keygen

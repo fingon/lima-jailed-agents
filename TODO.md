@@ -63,3 +63,28 @@ DESIGN.md.
 - [x] Ensure the prek hook is installed and run `make lint`, `make test`, and
   `make build` after implementation. Review the diff for unintended formatting
   changes and keep dependencies scoped to the implemented feature.
+
+## GPG real-Lima validation
+
+The implementation and isolated tests are complete; the remaining validation
+requires a session with access to Lima's host state. The current nono sandbox
+does not grant access to `~/.lima`.
+
+- [ ] In a disposable Lima VM and disposable host `GNUPGHOME`, enable
+  `gpg_forwarding`. Run `lja shell -- gpg --list-keys`, create a detached
+  signature in the guest, and verify it on the host. Encrypt on the host and
+  decrypt in the guest. Confirm no private-key files were copied.
+- [ ] Exercise host GUI pinentry with a passphrase-protected key, including
+  cancellation and retry, and test the supported host terminal-pinentry setup.
+- [ ] Run simultaneous LJA shells; exiting one must leave the other usable.
+  Confirm setup and the selected command share the temporary home. Verify
+  nested agents inherit it, and background jobs lose access after LJA exits.
+- [ ] Interrupt and SIGKILL LJA with an active GPG connection. Confirm the host
+  agent is unreachable through any surviving guest socket, then remove any
+  orphan SSH processes and inert temporary directories from the killed run.
+- [ ] Recreate with forwarding enabled. Verify candidate forwarding closes
+  before stop/rename, setup runs once, and the selected command uses a fresh
+  final-VM session. Exercise setup failure and restoration paths.
+- [ ] Disable forwarding for the next invocation and verify no host GPG process
+  or forwarding is started. Confirm existing-VM no-op create and read-only
+  lifecycle commands work without host GPG installed.

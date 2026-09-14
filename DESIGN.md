@@ -25,6 +25,7 @@ small executable entry point in `cmd/lja`.
 | `lima.go` | Lima JSON parsing, exact mounts, lifecycle, and bulk operations |
 | `lock.go` | Host advisory locks, state roots, directories, and instructions |
 | `git.go` | Recursive host Git configuration copying |
+| `gpg.go` | Invocation-scoped GPG agent forwarding and revocation |
 | `codex.go` | Conservative Codex TOML trust editing |
 | `agent.go` | Package provisioning, wrappers, invocation, and launch |
 | `discovery.go` | Project discovery, status, and stop |
@@ -237,6 +238,7 @@ is valid.
 The effective defaults are:
 
 ```yaml
+gpg_forwarding: false
 lima: {}
 packages:
   - git
@@ -297,7 +299,8 @@ filename constant is `.lja.yaml`.
 ## Guest preparation and agents
 
 Development packages are checked with `dpkg-query`. Missing effective packages
-(configured packages plus `git` when `copy_git_config` is enabled) are installed
+(configured packages plus `git` when `copy_git_config` is enabled and
+`gnupg` when `gpg_forwarding` is enabled) are installed
 together in one guest `sh -eu -c` sequence:
 `sudo apt-get update && sudo apt-get install -y PACKAGE...`. Each package is
 checked again after the batch. Agent installation is independent of the
@@ -398,6 +401,82 @@ creates private parents, rejects symlinks, and atomically replaces each file.
 Included files are published before the root `.gitconfig`, so a retry can
 complete a partial transfer. The host configuration is never modified.
 
+## GPG forwarding
+
+`gpg_forwarding` is a boolean development setting, defaulting to `false`.
+Global and project configuration follow ordinary scalar precedence, so project
+`false` overrides global `true`. `DevelopmentConfig.GPGForwarding` exposes the
+same setting to package callers, and `lja config` includes its effective value.
+Enabling it in project YAML grants the project access to host GPG operations.
+No VM recreation is needed; changes affect subsequent invocations.
+
+Each enabled workflow owns a temporary forwarding session. Development setup
+and the selected shell, make, or agent command share its `GNUPGHOME`; nested
+agents inherit it. Preparation-only calls, including create and update, close
+forwarding before returning. Existing-VM no-op create, config, status, stop,
+and delete do not discover GPG, export keys, or start forwarding. Disabled
+workflows perform none of these operations. Configured `GNUPGHOME` values or
+passthrough are rejected when forwarding is enabled; host `GNUPGHOME` still
+selects the source keyring and agent.
+
+After development packages and Git configuration are prepared, LJA:
+
+1. Requires host OpenSSH and GnuPG, starts the host agent with
+   `gpgconf --launch gpg-agent`, and discovers `agent-extra-socket`. The socket
+   must exist and be a Unix socket. There is no unrestricted-socket fallback.
+2. Exports public keys with `gpg --batch --export`. Creates a unique `0700`
+   guest directory under `/tmp/lja-gpg-*`, writes `no-autostart` to its GPG
+   configuration, discovers its agent socket, and creates a runtime socket
+   directory only when GnuPG selects one outside the temporary home. Public
+   keys are imported through stdin; an empty host public keyring is valid.
+3. Creates a private host Unix socket proxy in a unique temporary directory.
+   The proxy connects only to the discovered host extra socket and tracks all
+   active connections for revocation.
+4. Queries Lima for the instance's `SSHConfigFile` and starts a dedicated SSH
+   Unix-socket reverse forward from the guest agent socket to the proxy.
+   Connection sharing, SSH-agent forwarding, and X11 forwarding are disabled;
+   forwarding failures are fatal. Existing socket paths are never unlinked
+   to establish a tunnel. SSH keepalives detect disconnected peers.
+5. Waits for the guest socket and checks an agent `GETINFO version` response
+   before running setup or the requested command. Startup has a 30-second
+   timeout. GPG protocol traffic is never logged, and session environment values are not
+   put in persistent wrappers.
+
+The restricted extra socket is GnuPG's intended remote forwarding interface:
+see [GnuPG agent options](https://www.gnupg.org/documentation/manuals/gnupg/Agent-Options.html).
+Transport uses [OpenSSH Unix socket reverse forwarding](https://man.openbsd.org/ssh.1).
+Host pinentry and passphrase caching remain under host control. A GUI pinentry
+is convenient; terminal pinentry must already have a usable host terminal.
+LJA does not transmit passphrases or guest terminal settings to the host agent.
+
+The workflow closes all proxy connections first, then terminates and reaps
+SSH and removes its temporary directories and GnuPG runtime socket directory.
+Cleanup errors are returned alongside workflow errors; guest cleanup has a
+five-second timeout with one additional second to close inherited process
+pipes if descendants retain them. SIGINT, SIGTERM, proxy failures, and unexpected tunnel
+exit cancel the active setup or command and revoke access. Even SIGKILL closes
+the in-process proxy descriptors, so an orphaned SSH process cannot retain
+host-agent access. Abrupt termination can leave inert temporary files and
+orphaned processes; normal cleanup cannot run after SIGKILL.
+
+Concurrent invocations use independent homes, sockets, and tunnels. Recreation
+closes the candidate VM's session before stopping or renaming it, and launches
+establish a fresh session for the final VM without rerunning setup. Public
+keyring changes made by setup in the candidate session are discarded along
+with that session.
+
+Private keys, ownertrust, and host GPG configuration are never copied or
+mounted. Exported public keys do reveal identity metadata. The extra socket
+permits signing and decryption using agent-accessible keys; it is not a
+signing-only interface or a per-key allowlist. Guest root can use any live
+session socket. Separate sessions prevent collisions, not access by other
+privileged guest processes. Temporary keyring changes are discarded at exit.
+
+When Git configuration copying is also enabled, `gpg.program` and
+`gpg.openpgp.program` are rewritten to guest `gpg` in the root and recursively
+included copies. Signing preferences, signing key selection, and SSH/X.509
+program settings retain their original values. Host files are never edited.
+
 ## Validation strategy
 
 The repository uses `gotest.tools/v3` assertions and table-oriented tests for
@@ -410,6 +489,10 @@ failure handling. A fake `limactl` command can be supplied through
 `make check` runs `prek run --all-files`, `go test ./...`, and `go build ./...`.
 The repository hook formats Go files and runs `go vet ./...`.
 
-Routine tests do not boot Lima or use agent accounts. Real-Lima validation is
+Routine tests do not boot Lima or use agent accounts. GPG tests use fake Lima
+and SSH processes with live Unix sockets, including active-connection
+revocation after SIGTERM and SIGKILL. `make test-gpg` additionally generates a
+disposable local keyring to verify signing, decryption, public-only transfer,
+and revocation against a real GnuPG agent; it never uses the caller's keyring. Real-Lima validation is
 still needed for agent database persistence and concurrent shared-state use;
 the concrete checklist is in [TODO.md](TODO.md).

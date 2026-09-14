@@ -1,0 +1,8 @@
+[include]
+    path = included
+[gpg]
+    program = /host/bin/gpg
+[user]
+    signingkey = TESTKEY
+[commit]
+    gpgsign = true

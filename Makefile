@@ -2,7 +2,7 @@ PREK ?= prek
 PIPX ?= pipx
 PIPX_BIN_DIR ?= $(HOME)/.local/bin
 
-.PHONY: all dep lint test build install check
+.PHONY: all dep lint test build install check test-gpg
 
 all: check
 
@@ -54,6 +54,9 @@ lint:
 
 test:
 	go test ./...
+
+test-gpg:
+	LJA_TEST_REAL_GPG=1 go test -run '^TestGPGRealAgent$$' ./...
 
 build:
 	go build ./...

@@ -16,6 +16,7 @@ import (
 )
 
 const (
+	configGPGForwarding                 = "gpg_forwarding"
 	configLima                          = "lima"
 	configPackages                      = "packages"
 	configCopyGitConfig                 = "copy_git_config"
@@ -45,6 +46,7 @@ type SetupCommand struct {
 }
 
 type DevelopmentConfig struct {
+	GPGForwarding  bool
 	Lima           map[string]any
 	Packages       []string
 	CopyGitConfig  bool
@@ -54,6 +56,7 @@ type DevelopmentConfig struct {
 }
 
 type developmentConfigYAML struct {
+	GPGForwarding  bool              `yaml:"gpg_forwarding"`
 	Lima           map[string]any    `yaml:"lima"`
 	Packages       []string          `yaml:"packages"`
 	CopyGitConfig  bool              `yaml:"copy_git_config"`
@@ -75,6 +78,7 @@ func DefaultDevelopmentConfig() DevelopmentConfig {
 
 func (config DevelopmentConfig) clone() DevelopmentConfig {
 	cloned := DevelopmentConfig{
+		GPGForwarding:  config.GPGForwarding,
 		Lima:           mergeLimaConfig(nil, config.Lima),
 		Packages:       append([]string{}, config.Packages...),
 		CopyGitConfig:  config.CopyGitConfig,
@@ -100,6 +104,7 @@ func (config DevelopmentConfig) AsYAML() developmentConfigYAML {
 		environment[name] = value
 	}
 	return developmentConfigYAML{
+		GPGForwarding:  config.GPGForwarding,
 		Lima:           mergeLimaConfig(nil, config.Lima),
 		Packages:       packages,
 		CopyGitConfig:  config.CopyGitConfig,
@@ -110,6 +115,9 @@ func (config DevelopmentConfig) AsYAML() developmentConfigYAML {
 }
 
 func (config DevelopmentConfig) ResolveEnvironment(environment map[string]string) (map[string]string, error) {
+	if err := config.validateGPGEnvironment(nil); err != nil {
+		return nil, err
+	}
 	resolved := make(map[string]string, len(config.Env)+len(config.EnvPassthrough))
 	for _, name := range config.EnvPassthrough {
 		if _, explicit := config.Env[name]; explicit {
@@ -136,6 +144,8 @@ func (config DevelopmentConfig) ResolveEnvironment(environment map[string]string
 }
 
 type sourceDevelopmentConfig struct {
+	GPGForwarding                    bool
+	HasGPGForwarding                 bool
 	Lima                             map[string]any
 	Packages                         []string
 	HasPackages                      bool
@@ -323,7 +333,7 @@ func decodeDevelopmentConfig(content []byte, isProject bool) (sourceDevelopmentC
 		return sourceDevelopmentConfig{}, err
 	}
 	allowed := map[string]bool{
-		configLima: true, configPackages: true, configCopyGitConfig: true, configEnvironment: true,
+		configGPGForwarding: true, configLima: true, configPackages: true, configCopyGitConfig: true, configEnvironment: true,
 		configEnvironmentPassthrough: true, configSetup: true,
 	}
 	if isProject {
@@ -366,6 +376,13 @@ func decodeDevelopmentConfig(content []byte, isProject bool) (sourceDevelopmentC
 			}
 		}
 		decoded.Packages, decoded.HasPackages = packages, true
+	}
+	if node, present := values[configGPGForwarding]; present {
+		value, err := decodeConfigBool(node, configGPGForwarding)
+		if err != nil {
+			return sourceDevelopmentConfig{}, err
+		}
+		decoded.GPGForwarding, decoded.HasGPGForwarding = value, true
 	}
 	if node, present := values[configCopyGitConfig]; present {
 		value, err := decodeConfigBool(node, configCopyGitConfig)
@@ -432,6 +449,9 @@ func uniqueStrings(values []string) []string {
 
 func applyDevelopmentConfig(config DevelopmentConfig, source sourceDevelopmentConfig, path string) DevelopmentConfig {
 	config.Lima = mergeLimaConfig(config.Lima, source.Lima)
+	if source.HasGPGForwarding {
+		config.GPGForwarding = source.GPGForwarding
+	}
 	if source.HasPackages {
 		config.Packages = uniqueStrings(source.Packages)
 	}
@@ -504,12 +524,18 @@ func loadDevelopmentConfig(project string, environment map[string]string, hostHo
 		}
 		config = applyDevelopmentConfig(config, decoded, source.path)
 	}
+	if err := config.validateGPGEnvironment(nil); err != nil {
+		return DevelopmentConfig{}, err
+	}
 	return config, nil
 }
 
 func ValidateDevelopmentConfig(content []byte, isProject bool) error {
-	_, err := decodeDevelopmentConfig(content, isProject)
-	return err
+	source, err := decodeDevelopmentConfig(content, isProject)
+	if err != nil {
+		return err
+	}
+	return applyDevelopmentConfig(DefaultDevelopmentConfig(), source, "").validateGPGEnvironment(nil)
 }
 
 func yamlConfiguration(config DevelopmentConfig) ([]byte, error) {

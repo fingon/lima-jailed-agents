@@ -16,7 +16,12 @@ const (
 	limaForceFlag         = "-f"
 )
 
-func CreateVM(project string, options WorkflowOptions) (LimaInstance, error) {
+func CreateVM(project string, options WorkflowOptions) (returnedInstance LimaInstance, returnErr error) {
+	cleanup, err := options.ownGPGWorkflow()
+	if err != nil {
+		return LimaInstance{}, err
+	}
+	defer cleanup(&returnErr)
 	canonicalProject, err := canonicalProjectPath(project)
 	if err != nil {
 		return LimaInstance{}, err
@@ -74,7 +79,7 @@ func (options WorkflowOptions) prepareVMLocked(project, vmName string) (LimaInst
 			return options.replaceVMLocked(project, *old)
 		}
 	}
-	return prepareNamedVMLocked(project, vmName, options.StateRoot, options.Development, options.Environment, options.limaCommand())
+	return prepareNamedVMLocked(project, vmName, options.StateRoot, options.Development, options.Environment, options.limaCommand(), options.gpg)
 }
 
 type vmReplacement struct {
@@ -115,12 +120,16 @@ func (options WorkflowOptions) replaceVMLocked(project string, old LimaInstance)
 	cleanupCandidate := true
 	defer func() {
 		if returnErr != nil && cleanupCandidate {
+			returnErr = errors.Join(returnErr, options.gpg.closeSession())
 			if err := replacement.removeCandidate(); err != nil {
 				returnErr = errors.Join(returnErr, ljaError("cannot remove failed replacement %s: %w", replacement.candidate, err))
 			}
 		}
 	}()
-	if _, err := prepareNamedVMLocked(project, replacement.candidate, options.StateRoot, options.Development, options.Environment, options.limaCommand()); err != nil {
+	if _, err := prepareNamedVMLocked(project, replacement.candidate, options.StateRoot, options.Development, options.Environment, options.limaCommand(), options.gpg); err != nil {
+		return LimaInstance{}, err
+	}
+	if err := options.gpg.closeSession(); err != nil {
 		return LimaInstance{}, err
 	}
 	if err := replacement.operation(stopCommandName, replacement.candidate); err != nil {

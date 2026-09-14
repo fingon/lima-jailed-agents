@@ -93,6 +93,10 @@ func expandedGitPath(value string, hostHome string) (string, error) {
 }
 
 func GitConfigCopies(hostHome string) (map[string][]byte, error) {
+	return gitConfigCopiesForGPG(hostHome, false)
+}
+
+func gitConfigCopiesForGPG(hostHome string, forwardGPG bool) (map[string][]byte, error) {
 	absoluteHome, err := filepath.Abs(hostHome)
 	if err != nil {
 		return nil, ljaError("cannot copy host Git configuration: %w", err)
@@ -181,6 +185,11 @@ func GitConfigCopies(hostHome string) (map[string][]byte, error) {
 				valueBytes = entry[separator+1:]
 			}
 			key := string(keyBytes)
+			if forwardGPG && (key == "gpg.program" || key == "gpg.openpgp.program") {
+				if _, err := hostGitConfig(temporaryPath, "--replace-all", key, gpgCommand); err != nil {
+					return "", err
+				}
+			}
 			isInclude := key == gitIncludePathKey || (strings.HasPrefix(key, gitIncludeIfPrefix) && strings.HasSuffix(key, gitPathKeySuffix))
 			if key == gitExcludesFileKey && (separator < 0 || len(valueBytes) == 0) {
 				continue
@@ -308,12 +317,12 @@ func gitConfigWriteScript(relative string) (string, error) {
 	return GitConfigWriteScript(relative)
 }
 
-func prepareGit(project string, vmName string, limactlCommand string) error {
+func prepareGit(project string, vmName string, limactlCommand string, forwarding ...bool) error {
 	home, err := homeDirectory()
 	if err != nil {
 		return ljaError("cannot prepare Git in VM %s: %w", vmName, err)
 	}
-	copies, err := GitConfigCopies(home)
+	copies, err := gitConfigCopiesForGPG(home, len(forwarding) > 0 && forwarding[0])
 	if err != nil {
 		return ljaError("cannot prepare Git in VM %s: %w", vmName, err)
 	}

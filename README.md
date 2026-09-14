@@ -206,6 +206,7 @@ rejected. Comments and multiline setup blocks are supported.
 The effective defaults are:
 
 ```yaml
+gpg_forwarding: false
 lima: {}
 packages:
   - git
@@ -235,6 +236,29 @@ variables cannot be overridden by development configuration.
 By default Git and Make are prepared in the guest. `copy_git_config` is enabled
 by default and can be disabled independently of the package list. Removing a
 package from configuration does not uninstall it from an existing VM.
+
+## GPG access
+
+GPG forwarding is off by default. Enable it globally or in `.lja.yaml`:
+
+```yaml
+gpg_forwarding: true
+```
+
+LJA installs guest GnuPG, copies public keys into a temporary keyring, and
+forwards the host agent while setup and the selected command run. Private keys
+stay on the host. Host GnuPG and OpenSSH must be installed, with working host
+pinentry. Host `GNUPGHOME` is honored; do not put it in `env` or
+`env_passthrough` when forwarding is enabled.
+
+This enables signing **and decryption** with host-agent keys. Guest root can
+use the live socket, and host passphrase caching can allow operations without
+another prompt. Access ends when LJA exits; background guest jobs then lose it.
+Public keys reveal identity metadata, and temporary keyring edits are discarded.
+Project `false` overrides global `true`; changes apply to the next invocation.
+
+With Git copying enabled, OpenPGP executable paths are adjusted to guest `gpg`
+while signing preferences and key selection are preserved.
 
 ## Git and instructions
 
