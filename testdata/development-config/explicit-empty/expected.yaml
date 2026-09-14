@@ -1,3 +1,4 @@
+lima: {}
 packages: []
 copy_git_config: true
 env: {}

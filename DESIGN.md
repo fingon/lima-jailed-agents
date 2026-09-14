@@ -118,7 +118,8 @@ For project VM preparation the lifecycle is:
 3. Inspect the deterministic VM.
 4. If it exists, validate its effective mounts before changing state.
 5. Create the second state directory if shared mode needs it.
-6. Create an absent VM with `--tty=false`, `--name`, and CSV-encoded
+6. Create an absent VM with `--tty=false`, the managed `--name`, native
+   configuration overrides encoded as `--set` arguments, and CSV-encoded
    `--mount-only` paths.
 7. Start a stopped VM, rejecting all other states.
 8. Reinspect and revalidate mounts and the running state.
@@ -126,7 +127,8 @@ For project VM preparation the lifecycle is:
 
 The expected mount set is exact: no extra mounts, no duplicate entries, no
 read-only project/state mount, and no mount at a different guest path. A
-mismatch is actionable and never triggers deletion or migration. `status` and
+mismatch is actionable and never triggers implicit deletion or migration.
+Explicit recreation may replace a VM with mismatched mounts without booting it. `status` and
 `stop` use the same validation without creating or starting a VM.
 
 `delete` discovers the project and inspects its deterministic VM name without
@@ -138,6 +140,57 @@ stops on the first failure. Unknown statuses and malformed listings are errors.
 Deletion reports `status: Absent` after success and preserves host files and
 agent state. Deletion does not acquire LJA advisory locks, matching bulk stop.
 Both bulk commands accept `-a`; the former `stop-all` command is removed.
+
+### Create and recreate
+
+`CreateVM(project, WorkflowOptions)` and `lja create` use the same project
+lock as other preparation. Existing VMs are returned unchanged after mount
+validation; this no-op does not resolve environment passthrough or run setup.
+An absent VM is created, started, and prepared without installing or launching
+an agent. The CLI reports its name and status.
+
+`WorkflowOptions.Recreate` and the global `--recreate` flag request a fresh
+VM. The flag is accepted by create, shell, agent launches, and update, and
+rejected by config, status, stop, and delete. A flag after the passthrough
+separator belongs to the guest. Every preparation entry point enters the same
+replacement flow once; agent installation, trust, and wrappers run afterwards
+using the final VM name.
+
+If the original is absent, use ordinary creation. Otherwise, reject an
+Installing VM, check `limactl rename --help`, allocate unique short
+`lja-new-*` and `lja-old-*` names, and log all three names before changing
+state. Retain the project lock throughout:
+
+1. Create, boot, validate mounts, and run development preparation on the
+   temporary VM using the current configuration and selected host state.
+2. Stop the temporary VM, then stop the original if it was running.
+3. Rename the original to the backup name and the temporary VM to the
+   deterministic project name, with `--tty=false`.
+4. Start the replacement under its final name, revalidate mounts and Running
+   status, and probe guest connectivity.
+5. Delete the backup guest disk. Report cleanup failure without rolling back
+   the working replacement. Continue the requested workflow without repeating
+   development setup.
+
+Preparation failures leave the original untouched and clean up the temporary
+VM when inspection permits; all cleanup failures are returned with the primary
+error. If final startup or validation fails after both renames succeeded,
+stop the replacement, rename it aside, restore the backup name, and restore
+the original's running state. Delete the failed replacement only after
+restoration succeeds.
+
+Lima rename moves files individually and is not atomic. A rename error may
+leave both directories partially populated, so no automatic deletion or
+further rename is attempted after such an error. Return the original,
+temporary, and backup names with recovery instructions. Rollback failures
+likewise retain recoverable VMs and report their names. Interrupted operations
+can leave temporary or backup instances; LJA does not automatically adopt or
+delete them. They remain visible to Lima and the existing `--all` lifecycle
+commands, so recovery should precede bulk deletion.
+
+Recreation does not migrate guest disks or host state. Setup can change the
+shared project and agent-state files while the original is still running;
+VM rollback cannot undo these changes.
 
 ## Process boundary
 
@@ -169,13 +222,14 @@ boolean settings, and sequences of strings for list settings. Unknown and
 duplicate keys, null values, invalid types, invalid UTF-8, and multiple YAML
 documents are rejected. Errors include the source filename when loading a file
 and include a line and column whenever the YAML node has that information.
-Package names, environment names, NUL values, and variables managed by LJA are
-also rejected. Missing files retain defaults, while an explicit empty mapping
+Invalid package names, environment names, NUL values, and variables managed
+by LJA are also rejected. Missing files retain defaults, while an explicit empty mapping
 is valid.
 
 The effective defaults are:
 
 ```yaml
+lima: {}
 packages:
   - git
   - make
@@ -183,6 +237,34 @@ copy_git_config: true
 env: {}
 env_passthrough: []
 setup: []
+```
+
+The `lima` setting is a native Lima YAML mapping, defaulting to `{}`.
+It supports strings, booleans, finite numbers, lists, and nested string-keyed
+mappings. Recursive validation rejects duplicate keys, nulls, aliases, custom
+scalar tags, and NUL characters with source locations. The top-level
+`lima.mounts` key is reserved for LJA. Other Lima keys and their semantics
+are validated by Lima during creation.
+
+Global and project Lima mappings merge recursively. Project scalars and lists
+replace inherited values; empty mappings contribute no overrides to inherited
+mappings. Configuration cloning deep-copies mappings and lists. `lja config`
+includes the merged overrides, not a resolved Lima template.
+
+Creation sorts the top-level Lima keys and generates one `--set` assignment
+per key, using JSON encoding for the key and value and passing each expression
+as one process argument. A top-level mapping replaces that template field;
+Lima's defaults supply omitted settings. No shell evaluates configuration
+values. The managed VM name and exact mounts remain under LJA control, and
+effective mounts are checked before boot. Existing VMs are never edited to
+apply resource changes: explicit recreation is required.
+
+Example project overrides:
+
+```yaml
+lima:
+  cpus: 4
+  memory: "8GiB"
 ```
 
 Project package lists replace the inherited list and are deduplicated. Explicit
@@ -195,7 +277,7 @@ Caller environment values are read only when an operation needs to prepare a
 VM. A passthrough name must exist, while an explicit `env` value takes
 precedence and may intentionally be empty. The resolved values are sent only
 to setup and the selected guest command. They are not written to wrappers,
-configuration output, or LJA logs. `config`, `status`, and `stop` do not require
+configuration output, or LJA logs. `config`, `status`, `stop`, and a no-op `create` do not require
 passthrough variables; bulk stop and delete skip development configuration entirely.
 
 `lja config` will emit deterministic YAML with two-space indentation and a

@@ -10,16 +10,17 @@ import (
 )
 
 const (
-	limaListArguments       = "list"
-	limaListAllFields       = "--all-fields"
-	limaListFormatFlag      = "--format"
-	limaListFormatJSON      = "json"
-	limaMountWritableSuffix = ":w"
-	limaStatusUninitialized = "Uninitialized"
-	limaStatusInstalling    = "Installing"
-	limaStatusBroken        = "Broken"
-	limaStatusStopped       = "Stopped"
-	limaStatusRunning       = "Running"
+	limaMountMismatchMessage = "VM %s mounts do not exactly match selected writable paths: %s. For an existing project-local VM, use %s. To change storage, use lja create --recreate for VM %s; host state is not migrated automatically."
+	limaListArguments        = "list"
+	limaListAllFields        = "--all-fields"
+	limaListFormatFlag       = "--format"
+	limaListFormatJSON       = "json"
+	limaMountWritableSuffix  = ":w"
+	limaStatusUninitialized  = "Uninitialized"
+	limaStatusInstalling     = "Installing"
+	limaStatusBroken         = "Broken"
+	limaStatusStopped        = "Stopped"
+	limaStatusRunning        = "Running"
 )
 
 var knownLimaStatuses = map[string]bool{
@@ -264,11 +265,11 @@ func ValidateProjectMount(instance LimaInstance, project string, stateRoot strin
 		actualSet[mount] = true
 	}
 	if len(actual) != len(expected) || len(actualSet) != len(expectedSet) {
-		return ljaError("VM %s mounts do not exactly match selected writable paths: %s. For an existing project-local VM, use %s. To change storage, stop and recreate VM %s with limactl; host state is not migrated automatically.", instance.Name, strings.Join(expected, ", "), projectStateFlag, instance.Name)
+		return ljaError(limaMountMismatchMessage, instance.Name, strings.Join(expected, ", "), projectStateFlag, instance.Name)
 	}
 	for mount := range expectedSet {
 		if !actualSet[mount] {
-			return ljaError("VM %s mounts do not exactly match selected writable paths: %s. For an existing project-local VM, use %s. To change storage, stop and recreate VM %s with limactl; host state is not migrated automatically.", instance.Name, strings.Join(expected, ", "), projectStateFlag, instance.Name)
+			return ljaError(limaMountMismatchMessage, instance.Name, strings.Join(expected, ", "), projectStateFlag, instance.Name)
 		}
 	}
 	return nil
@@ -300,15 +301,11 @@ func mountArguments(paths []string) ([]string, error) {
 	return MountArguments(paths)
 }
 
-func prepareVMLocked(project string, stateRoot string, development *DevelopmentConfig, environment map[string]string, limactlCommand string) (LimaInstance, error) {
+func prepareNamedVMLocked(project string, vmName string, stateRoot string, development *DevelopmentConfig, environment map[string]string, limactlCommand string) (LimaInstance, error) {
 	if err := validateProjectDirectory(project); err != nil {
 		return LimaInstance{}, err
 	}
 	mountPaths, err := expectedMountPaths(project, stateRoot)
-	if err != nil {
-		return LimaInstance{}, err
-	}
-	vmName, err := projectVMName(project)
 	if err != nil {
 		return LimaInstance{}, err
 	}
@@ -333,6 +330,11 @@ func prepareVMLocked(project string, stateRoot string, development *DevelopmentC
 			return LimaInstance{}, err
 		}
 		arguments := []string{"create", limaNoninteractiveFlag, "--name", vmName}
+		overrides, err := limaOverrideArguments(developmentConfigOrDefault(development).Lima)
+		if err != nil {
+			return LimaInstance{}, err
+		}
+		arguments = append(arguments, overrides...)
 		arguments = append(arguments, mountArguments...)
 		options := defaultProcessOptions(limactlCommand)
 		if _, err := runLima(arguments, options); err != nil {

@@ -1,3 +1,4 @@
+lima: {}
 packages:
   - ninja-build
 copy_git_config: false

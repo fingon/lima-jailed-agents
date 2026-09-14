@@ -51,6 +51,7 @@ lja [OPTIONS] codex [-- AGENT_ARGS...]
 lja [OPTIONS] claude [-- AGENT_ARGS...]
 lja [OPTIONS] opencode [-- AGENT_ARGS...]
 lja [OPTIONS] shell [-- SHELL_ARGS...]
+lja [OPTIONS] create [--recreate]
 lja [OPTIONS] config
 lja [OPTIONS] status
 lja [OPTIONS] stop [-a|--all]
@@ -65,6 +66,9 @@ lja --project ~/src/example codex -- exec "Review the current change"
 lja --project ~/src/example claude -- auth login
 lja --project ~/src/example --with-agent claude --with-agent opencode codex
 lja --project ~/src/example shell -- make test
+lja --project ~/src/example create
+lja --project ~/src/example create --recreate
+lja --project ~/src/example --recreate shell
 lja --project ~/src/example status
 lja --project ~/src/example stop
 lja stop --all
@@ -78,6 +82,7 @@ Options before the command select the project and storage:
 - `--state-dir PATH` selects a shared state root.
 - `--project-state` stores state below the project instead.
 - `--with-agent AGENT` prepares another agent in the same VM. It is repeatable.
+- `--recreate` replaces the VM before create, shell, agent launch, or update.
 - `-v` enables debug logging.
 
 Arguments after the optional `--` separator are forwarded as raw argument
@@ -109,9 +114,9 @@ aliases share a VM while equal names in different directories do not.
 LJA creates or starts only a VM whose effective writable mounts exactly match
 the selected storage. Project-local mode mounts the project. Shared mode mounts
 the project and the selected state root at their same absolute guest paths.
-Mismatched existing VMs are rejected; LJA never silently deletes, recreates, or
-migrates them. Use `--project-state` to continue using an older project-local
-VM, or stop and recreate it with `limactl` when changing storage.
+Mismatched existing VMs are rejected unless `--recreate` is explicit; LJA
+never silently deletes, recreates, or migrates them. Use `--project-state` to continue using an older project-local
+VM, or use `lja create --recreate` when changing storage.
 
 The default shared state root is
 `${XDG_DATA_HOME:-~/.local/share}/lja/agents`. `LJA_STATE_DIR` is an environment
@@ -133,6 +138,19 @@ absent. It works even when existing mounts differ from the current storage
 configuration. Deletion removes the VM and its guest disk; host project files
 and agent state are preserved. Both bulk commands also accept `-a`.
 
+`create` prepares an absent VM (boot, packages, Git configuration, and setup)
+without launching an agent. An existing VM is left unchanged after mount
+validation, even if stopped.
+
+`create --recreate` prepares a new VM before stopping and replacing the old
+one. It deletes the old guest disk only after the replacement starts under the
+project's VM name. The same flag works before shell, agent, and update commands.
+Failed preparation leaves the old VM intact; failed startup after promotion
+attempts rollback. Lima rename is not atomic, so a failed rename preserves both
+directories and reports recovery details. Setup changes to shared host files
+cannot be rolled back. Interrupted replacements may leave `lja-new-*` or
+`lja-old-*` VMs; inspect these before cleanup.
+
 ## Development configuration
 
 LJA optionally reads these YAML mappings, in order:
@@ -147,6 +165,9 @@ Legacy JSON filenames are ignored. `config` prints the merged result as
 deterministic YAML without resolving caller environment values.
 
 ```yaml
+lima:
+  cpus: 4
+  memory: "8GiB"
 packages: [git, make, ninja-build]
 copy_git_config: true
 env:
@@ -158,15 +179,22 @@ setup:
     sh ./scripts/dev-setup.sh
 ```
 
-Configuration must be a single YAML mapping. Keys and `env` values must be
-strings, booleans must be YAML booleans, and list values must be sequences of
-strings. Unknown or duplicate keys, nulls, implicit scalar coercions, invalid
-UTF-8, and multiple documents are errors. Comments and multiline setup blocks
-are supported.
+`lima` accepts native Lima settings, such as the four CPU cores and 8 GiB
+of memory above. Global and project mappings merge recursively; project scalars
+and lists replace inherited values. Overrides apply when creating a VM; use
+`--recreate` to apply changes to an existing VM. LJA manages `mounts` and the
+VM name. Lima validates other settings.
+
+Configuration must be a single YAML mapping with string keys. Development
+settings retain their declared types; `lima` also accepts numeric values,
+nested mappings, and lists. Unknown development settings, duplicate keys, nulls,
+invalid UTF-8, and multiple documents are errors. YAML aliases in `lima` are
+rejected. Comments and multiline setup blocks are supported.
 
 The effective defaults are:
 
 ```yaml
+lima: {}
 packages:
   - git
   - make
@@ -181,7 +209,8 @@ merged by name, with the project taking precedence. Setup commands and
 passthrough names append to the global values unless a project sets
 `inherit_setup` or `inherit_env_passthrough` to `false`. Commands run from the
 project root in separate `sh -eu -c` guest processes and may use guest `sudo`.
-They run for `shell`, agent launches, and `update`; they must be idempotent.
+They run for `shell`, agent launches, `update`, and VM creation; they must be
+idempotent. Recreation runs development setup once before promotion.
 
 Only explicitly named caller variables are forwarded. Missing passthrough
 variables are errors, empty values are preserved, and values are never stored

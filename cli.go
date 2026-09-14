@@ -10,6 +10,7 @@ import (
 )
 
 const (
+	createCommandName = "create"
 	stopCommandName   = "stop"
 	deleteCommandName = "delete"
 )
@@ -27,6 +28,7 @@ type updateCommand struct {
 }
 
 type CLI struct {
+	Recreate     bool     `name:"recreate" help:"replace the VM after preparing a new one (create, shell, agents, update)"`
 	Project      string   `name:"project" short:"" placeholder:"PATH" help:"select an exact project directory"`
 	Verbose      bool     `short:"v" name:"verbose" help:"enable verbose diagnostic logging"`
 	WithAgent    []string `name:"with-agent" enum:"codex,claude,opencode" sep:"none" help:"prepare an additional agent for an agent launch"`
@@ -37,6 +39,7 @@ type CLI struct {
 	Claude   passthroughCommand `cmd:"" optional:"" help:"launch claude"`
 	Opencode passthroughCommand `cmd:"" optional:"" name:"opencode" help:"launch opencode"`
 	Shell    passthroughCommand `cmd:"" optional:"" help:"open a shell in the project VM"`
+	Create   struct{}           `cmd:"" optional:"" help:"prepare the project VM only if absent"`
 	Config   struct{}           `cmd:"" optional:"" help:"show resolved development configuration"`
 	Status   struct{}           `cmd:"" optional:"" help:"show project VM status"`
 	Stop     lifecycleCommand   `cmd:"" optional:"" help:"stop the project VM or all LJA VMs"`
@@ -69,6 +72,9 @@ func commandName(context *kong.Context) string {
 }
 
 func requestedAgents(cli *CLI, command string) ([]string, error) {
+	if cli.Recreate && command != createCommandName && command != "shell" && command != "update" && !isAgentCommand(command) {
+		return nil, ljaError("--recreate is only valid with create, shell, agent launch, and update commands")
+	}
 	if len(cli.WithAgent) != 0 && !isAgentCommand(command) {
 		return nil, ljaError("--with-agent is only valid with agent launch commands")
 	}
@@ -148,11 +154,22 @@ func runCommand(cli *CLI, command string, project string, workingDirectory strin
 		}
 		return 0, nil
 	}
+	if command == createCommandName {
+		instance, err := CreateVM(project, WorkflowOptions{StateRoot: stateRoot, Development: &development, LimaCommand: limaCtlCommand, Recreate: cli.Recreate})
+		if err != nil {
+			return 0, err
+		}
+		if _, err := fmt.Printf("vm: %s\nstatus: %s\n", instance.Name, instance.Status); err != nil {
+			return 0, ljaError("cannot report VM: %w", err)
+		}
+		return 0, nil
+	}
 	resolvedEnvironment, err := development.ResolveEnvironment(environment)
 	if err != nil {
 		return 0, err
 	}
 	workflowOptions := WorkflowOptions{
+		Recreate:    cli.Recreate,
 		StateRoot:   stateRoot,
 		Development: &development,
 		Environment: resolvedEnvironment,

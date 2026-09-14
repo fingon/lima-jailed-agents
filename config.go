@@ -16,6 +16,7 @@ import (
 )
 
 const (
+	configLima                          = "lima"
 	configPackages                      = "packages"
 	configCopyGitConfig                 = "copy_git_config"
 	configEnvironment                   = "env"
@@ -44,6 +45,7 @@ type SetupCommand struct {
 }
 
 type DevelopmentConfig struct {
+	Lima           map[string]any
 	Packages       []string
 	CopyGitConfig  bool
 	Env            map[string]string
@@ -52,6 +54,7 @@ type DevelopmentConfig struct {
 }
 
 type developmentConfigYAML struct {
+	Lima           map[string]any    `yaml:"lima"`
 	Packages       []string          `yaml:"packages"`
 	CopyGitConfig  bool              `yaml:"copy_git_config"`
 	Env            map[string]string `yaml:"env"`
@@ -61,6 +64,7 @@ type developmentConfigYAML struct {
 
 func DefaultDevelopmentConfig() DevelopmentConfig {
 	return DevelopmentConfig{
+		Lima:           make(map[string]any),
 		Packages:       []string{gitCommand, makeCommand},
 		CopyGitConfig:  true,
 		Env:            make(map[string]string),
@@ -71,6 +75,7 @@ func DefaultDevelopmentConfig() DevelopmentConfig {
 
 func (config DevelopmentConfig) clone() DevelopmentConfig {
 	cloned := DevelopmentConfig{
+		Lima:           mergeLimaConfig(nil, config.Lima),
 		Packages:       append([]string{}, config.Packages...),
 		CopyGitConfig:  config.CopyGitConfig,
 		Env:            make(map[string]string, len(config.Env)),
@@ -95,6 +100,7 @@ func (config DevelopmentConfig) AsYAML() developmentConfigYAML {
 		environment[name] = value
 	}
 	return developmentConfigYAML{
+		Lima:           mergeLimaConfig(nil, config.Lima),
 		Packages:       packages,
 		CopyGitConfig:  config.CopyGitConfig,
 		Env:            environment,
@@ -130,6 +136,7 @@ func (config DevelopmentConfig) ResolveEnvironment(environment map[string]string
 }
 
 type sourceDevelopmentConfig struct {
+	Lima                             map[string]any
 	Packages                         []string
 	HasPackages                      bool
 	CopyGitConfig                    bool
@@ -316,7 +323,7 @@ func decodeDevelopmentConfig(content []byte, isProject bool) (sourceDevelopmentC
 		return sourceDevelopmentConfig{}, err
 	}
 	allowed := map[string]bool{
-		configPackages: true, configCopyGitConfig: true, configEnvironment: true,
+		configLima: true, configPackages: true, configCopyGitConfig: true, configEnvironment: true,
 		configEnvironmentPassthrough: true, configSetup: true,
 	}
 	if isProject {
@@ -341,6 +348,13 @@ func decodeDevelopmentConfig(content []byte, isProject bool) (sourceDevelopmentC
 		return sourceDevelopmentConfig{}, configNodeError(unknownNode, "unknown settings: %s", strings.Join(unknown, ", "))
 	}
 	decoded := sourceDevelopmentConfig{Env: make(map[string]string)}
+	if node, present := values[configLima]; present {
+		lima, err := decodeLimaConfig(node)
+		if err != nil {
+			return sourceDevelopmentConfig{}, err
+		}
+		decoded.Lima = lima
+	}
 	if node, present := values[configPackages]; present {
 		packages, err := decodeConfigArray(node, configPackages)
 		if err != nil {
@@ -417,6 +431,7 @@ func uniqueStrings(values []string) []string {
 }
 
 func applyDevelopmentConfig(config DevelopmentConfig, source sourceDevelopmentConfig, path string) DevelopmentConfig {
+	config.Lima = mergeLimaConfig(config.Lima, source.Lima)
 	if source.HasPackages {
 		config.Packages = uniqueStrings(source.Packages)
 	}

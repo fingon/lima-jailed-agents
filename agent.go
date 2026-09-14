@@ -100,6 +100,7 @@ func NormalizeAgentNames(selected string, additional []string) ([]string, error)
 }
 
 type WorkflowOptions struct {
+	Recreate      bool
 	StateRoot     string
 	Development   *DevelopmentConfig
 	Environment   map[string]string
@@ -283,7 +284,7 @@ func PrepareVM(project string, options WorkflowOptions) (LimaInstance, error) {
 	}
 	returnValue := LimaInstance{}
 	lockErr := withAdvisoryLock(canonicalProject, vmName, options.StateRoot, options.LockDirectory, func(string) error {
-		instance, prepareErr := prepareVMLocked(canonicalProject, options.StateRoot, options.Development, options.Environment, options.limaCommand())
+		instance, prepareErr := options.prepareVMLocked(canonicalProject, vmName)
 		if prepareErr != nil {
 			return prepareErr
 		}
@@ -314,7 +315,7 @@ func InstallAgent(project string, agentName string, update bool, options Workflo
 	}
 	returnValue := LimaInstance{}
 	lockErr := withAdvisoryLock(canonicalProject, vmName, options.StateRoot, options.LockDirectory, func(string) error {
-		instance, prepareErr := prepareVMLocked(canonicalProject, options.StateRoot, options.Development, options.Environment, options.limaCommand())
+		instance, prepareErr := options.prepareVMLocked(canonicalProject, vmName)
 		if prepareErr != nil {
 			return prepareErr
 		}
@@ -513,7 +514,7 @@ func prepareAgents(project string, selectedAgent string, withAgents []string, tr
 	}
 	returnValue := LimaInstance{}
 	lockErr := withAdvisoryLock(canonicalProject, vmName, options.StateRoot, options.LockDirectory, func(string) error {
-		instance, prepareErr := prepareVMLocked(canonicalProject, options.StateRoot, options.Development, options.Environment, options.limaCommand())
+		instance, prepareErr := options.prepareVMLocked(canonicalProject, vmName)
 		if prepareErr != nil {
 			return prepareErr
 		}
