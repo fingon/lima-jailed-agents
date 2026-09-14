@@ -23,7 +23,7 @@ const (
 	snapClassicFlag                  = "--classic"
 	sudoCommand                      = "sudo"
 	npmCommand                       = "npm"
-	npmInstallCommand                = "install"
+	installCommand                   = "install"
 	npmGlobalFlag                    = "-g"
 	aptGetCommand                    = "apt-get"
 	codeXHomeEnvironment             = "CODEX_HOME"
@@ -146,30 +146,63 @@ func guestPackageInstalled(project string, vmName string, packageName string, li
 	return strings.TrimSpace(string(result.Stdout)) == packageInstalledStatus, nil
 }
 
-func ensureGuestPackage(project string, vmName string, packageName string, limactlCommand string) error {
-	installed, err := guestPackageInstalled(project, vmName, packageName, limactlCommand)
-	if err != nil {
-		return ljaError("cannot prepare package %s in VM %s: %w", packageName, vmName, err)
+func effectiveDevelopmentPackages(config DevelopmentConfig) []string {
+	packages := append([]string{}, config.Packages...)
+	if config.CopyGitConfig {
+		packages = append(packages, gitCommand)
 	}
-	if installed {
-		return nil
+	return uniqueStrings(packages)
+}
+
+func guestPackageInstallationScript(packageNames []string) string {
+	quotedPackages := make([]string, 0, len(packageNames))
+	for _, packageName := range packageNames {
+		quotedPackages = append(quotedPackages, shellQuote(packageName))
 	}
-	slog.Info("installing package", "package", packageName, "vm", vmName)
-	for _, arguments := range [][]string{
-		{sudoCommand, aptGetCommand, "update"},
-		{sudoCommand, aptGetCommand, npmInstallCommand, "-y", packageName},
-	} {
-		options := defaultProcessOptions(limactlCommand)
-		if _, err := runGuest(project, vmName, arguments, options, nil); err != nil {
+	return fmt.Sprintf(
+		"%s %s update && %s %s %s -y %s",
+		sudoCommand,
+		aptGetCommand,
+		sudoCommand,
+		aptGetCommand,
+		installCommand,
+		strings.Join(quotedPackages, " "),
+	)
+}
+
+func ensureGuestPackages(project string, vmName string, packageNames []string, limactlCommand string) error {
+	missing := make([]string, 0, len(packageNames))
+	for _, packageName := range uniqueStrings(packageNames) {
+		installed, err := guestPackageInstalled(project, vmName, packageName, limactlCommand)
+		if err != nil {
 			return ljaError("cannot prepare package %s in VM %s: %w", packageName, vmName, err)
 		}
+		if !installed {
+			missing = append(missing, packageName)
+		}
 	}
-	installed, err = guestPackageInstalled(project, vmName, packageName, limactlCommand)
-	if err != nil {
-		return ljaError("cannot prepare package %s in VM %s: %w", packageName, vmName, err)
+	if len(missing) == 0 {
+		return nil
 	}
-	if !installed {
-		return ljaError("cannot prepare package %s in VM %s: installation did not provide the requested package", packageName, vmName)
+
+	slog.Info("installing packages", "packages", missing, "vm", vmName)
+	options := defaultProcessOptions(limactlCommand)
+	if _, err := runGuest(project, vmName, []string{
+		shellCommand,
+		"-eu",
+		shellCommandFlag,
+		guestPackageInstallationScript(missing),
+	}, options, nil); err != nil {
+		return ljaError("cannot prepare packages %s in VM %s: %w", strings.Join(missing, ", "), vmName, err)
+	}
+	for _, packageName := range missing {
+		installed, err := guestPackageInstalled(project, vmName, packageName, limactlCommand)
+		if err != nil {
+			return ljaError("cannot prepare package %s in VM %s: %w", packageName, vmName, err)
+		}
+		if !installed {
+			return ljaError("cannot prepare package %s in VM %s: installation did not provide the requested package", packageName, vmName)
+		}
 	}
 	return nil
 }
@@ -213,7 +246,7 @@ func ensureNodeRuntime(project string, vmName string, limactlCommand string) err
 func installAgentPackage(project string, vmName string, agent AgentSpec, limactlCommand string) error {
 	slog.Info("installing agent", "agent", agent.Name, "package", agent.Package, "vm", vmName)
 	options := defaultProcessOptions(limactlCommand)
-	_, err := runGuest(project, vmName, []string{sudoCommand, npmCommand, npmInstallCommand, npmGlobalFlag, agent.Package}, options, nil)
+	_, err := runGuest(project, vmName, []string{sudoCommand, npmCommand, installCommand, npmGlobalFlag, agent.Package}, options, nil)
 	return err
 }
 
@@ -247,13 +280,8 @@ func installAgentLocked(project string, vmName string, agent AgentSpec, update b
 
 func prepareDevelopment(project string, vmName string, config *DevelopmentConfig, environment map[string]string, limactlCommand string) error {
 	actualConfig := developmentConfigOrDefault(config)
-	for _, packageName := range actualConfig.Packages {
-		if packageName == gitCommand && actualConfig.CopyGitConfig {
-			continue
-		}
-		if err := ensureGuestPackage(project, vmName, packageName, limactlCommand); err != nil {
-			return err
-		}
+	if err := ensureGuestPackages(project, vmName, effectiveDevelopmentPackages(actualConfig), limactlCommand); err != nil {
+		return err
 	}
 	if actualConfig.CopyGitConfig {
 		if err := prepareGit(project, vmName, limactlCommand); err != nil {

@@ -222,7 +222,10 @@ passthrough names append to the global values unless a project sets
 `inherit_setup` or `inherit_env_passthrough` to `false`. Commands run from the
 project root in separate `sh -eu -c` guest processes and may use guest `sudo`.
 They run for `shell`, agent launches, `update`, and VM creation; they must be
-idempotent. Recreation runs development setup once before promotion.
+idempotent. Missing packages are checked individually and installed together in
+one guest apt transaction; `git` is included automatically when
+`copy_git_config` is enabled. Recreation runs development setup once before
+promotion.
 
 Only explicitly named caller variables are forwarded. Missing passthrough
 variables are errors, empty values are preserved, and values are never stored

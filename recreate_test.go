@@ -13,13 +13,14 @@ import (
 )
 
 const (
-	vmProcessEnv      = "LJA_TEST_VM_PROCESS"
-	vmDatabaseEnv     = "LJA_TEST_VM_DATABASE"
-	vmFailureEnv      = "LJA_TEST_VM_FAILURE"
-	vmBinaryEnv       = "LJA_TEST_BINARY"
-	testOriginalID    = "original"
-	testReplacementID = "replacement"
-	testSetupCommand  = "test-setup"
+	vmProcessEnv            = "LJA_TEST_VM_PROCESS"
+	vmDatabaseEnv           = "LJA_TEST_VM_DATABASE"
+	vmFailureEnv            = "LJA_TEST_VM_FAILURE"
+	vmBinaryEnv             = "LJA_TEST_BINARY"
+	vmPackageInstallNoopEnv = "LJA_TEST_PACKAGE_INSTALL_NOOP"
+	testOriginalID          = "original"
+	testReplacementID       = "replacement"
+	testSetupCommand        = "test-setup"
 )
 
 type testMount struct {
@@ -37,9 +38,10 @@ type testVM struct {
 }
 
 type vmDatabase struct {
-	VMs        map[string]testVM
-	Operations [][]string
-	Failed     int
+	VMs                     map[string]testVM
+	Operations              [][]string
+	Failed                  int
+	PackageInstallationDone bool
 }
 
 func (database *vmDatabase) save() error {
@@ -87,6 +89,17 @@ func runVMProcess() error {
 		return fmt.Errorf("missing fake Lima operation")
 	}
 	operation := arguments[0]
+	guestArguments := []string{}
+	if operation == "shell" {
+		guestArgumentIndex := 4
+		if len(arguments) > 1 && arguments[1] == limaNoninteractiveFlag {
+			guestArgumentIndex++
+		}
+		if len(arguments) <= guestArgumentIndex {
+			return fmt.Errorf("missing fake guest command")
+		}
+		guestArguments = arguments[guestArgumentIndex:]
+	}
 	if operation == "list" {
 		instances := make([]testVM, 0, len(database.VMs))
 		for _, instance := range database.VMs {
@@ -126,6 +139,8 @@ func runVMProcess() error {
 	if operation == "shell" {
 		if arguments[len(arguments)-1] == testSetupCommand {
 			stage = "setup"
+		} else if isPackageInstallationCommand(guestArguments) {
+			stage = "package-install"
 		} else {
 			stage = "connect"
 		}
@@ -205,6 +220,14 @@ func runVMProcess() error {
 	case "delete":
 		delete(database.VMs, name)
 	case "shell":
+		if len(guestArguments) > 0 && guestArguments[0] == "dpkg-query" && database.PackageInstallationDone {
+			if _, err := fmt.Fprint(os.Stdout, packageInstalledStatus); err != nil {
+				return err
+			}
+		}
+		if isPackageInstallationCommand(guestArguments) && os.Getenv(vmPackageInstallNoopEnv) != "1" {
+			database.PackageInstallationDone = true
+		}
 		if len(arguments) >= 3 && arguments[len(arguments)-3] == guestCommandProbe {
 			if _, err := fmt.Fprintln(os.Stdout, "/usr/bin/"+name); err != nil {
 				return err
@@ -220,6 +243,10 @@ func runVMProcess() error {
 		return fmt.Errorf("unexpected operation %s", operation)
 	}
 	return database.save()
+}
+
+func isPackageInstallationCommand(arguments []string) bool {
+	return len(arguments) >= 4 && arguments[0] == shellCommand && arguments[1] == "-eu" && arguments[2] == shellCommandFlag && strings.Contains(arguments[3], aptGetCommand+" "+installCommand)
 }
 
 func vmFixture(t *testing.T, status string) (string, string, WorkflowOptions) {
@@ -247,6 +274,137 @@ func vmFixture(t *testing.T, status string) (string, string, WorkflowOptions) {
 	assert.NilError(t, os.WriteFile(command, script, 0o755))
 	config := DevelopmentConfig{Lima: map[string]any{"cpus": 4, "memory": "8GiB"}, Setup: []SetupCommand{{Command: testSetupCommand}}}
 	return project, name, WorkflowOptions{Development: &config, LimaCommand: command, LockDirectory: filepath.Join(root, "locks")}
+}
+
+func TestEffectiveDevelopmentPackages(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		packages      []string
+		copyGitConfig bool
+		want          []string
+	}{
+		{name: "configured packages", packages: []string{"make", "ninja-build"}, want: []string{"make", "ninja-build"}},
+		{name: "implicit Git", packages: []string{"make"}, copyGitConfig: true, want: []string{"make", gitCommand}},
+		{name: "deduplicated Git", packages: []string{"git", "make", "git"}, copyGitConfig: true, want: []string{"git", "make"}},
+		{name: "empty without Git copy", copyGitConfig: false, want: []string{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert.DeepEqual(t, effectiveDevelopmentPackages(DevelopmentConfig{
+				Packages:      test.packages,
+				CopyGitConfig: test.copyGitConfig,
+			}), test.want)
+		})
+	}
+}
+
+func TestGuestPackageInstallationScript(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		packages []string
+		want     string
+	}{
+		{name: "one package", packages: []string{"make"}, want: "sudo apt-get update && sudo apt-get install -y 'make'"},
+		{name: "multiple packages", packages: []string{"make", "ninja-build"}, want: "sudo apt-get update && sudo apt-get install -y 'make' 'ninja-build'"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, guestPackageInstallationScript(test.packages), test.want)
+		})
+	}
+}
+
+func TestPreparationBatchesGuestPackages(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		packages      []string
+		copyGitConfig bool
+		wantScript    string
+	}{
+		{name: "configured packages", packages: []string{"make", "ninja-build"}, wantScript: "sudo apt-get update && sudo apt-get install -y 'make' 'ninja-build'"},
+		{name: "implicit Git", packages: []string{"make"}, copyGitConfig: true, wantScript: "sudo apt-get update && sudo apt-get install -y 'make' 'git'"},
+		{name: "configured Git is not duplicated", packages: []string{"git", "make"}, copyGitConfig: true, wantScript: "sudo apt-get update && sudo apt-get install -y 'git' 'make'"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			project, vmName, options := vmFixture(t, "")
+			root := filepath.Dir(project)
+			t.Setenv("HOME", root)
+			config := DevelopmentConfig{Packages: test.packages, CopyGitConfig: test.copyGitConfig}
+			err := prepareDevelopment(project, vmName, &config, nil, options.LimaCommand)
+			assert.NilError(t, err)
+
+			database, err := readVMDatabase()
+			assert.NilError(t, err)
+			installations := make([][]string, 0)
+			for _, operation := range database.Operations {
+				if len(operation) >= 8 && isPackageInstallationCommand(operation[4:]) {
+					installations = append(installations, operation)
+				}
+			}
+			assert.Equal(t, len(installations), 1)
+			assert.Equal(t, installations[0][7], test.wantScript)
+		})
+	}
+}
+
+func TestPreparationSkipsReadyAndEmptyGuestPackages(t *testing.T) {
+	for _, test := range []struct {
+		name               string
+		packages           []string
+		packageInstallDone bool
+		wantPackageQueries int
+		wantInstallations  int
+	}{
+		{name: "already installed", packages: []string{"make", "ninja-build"}, packageInstallDone: true, wantPackageQueries: 2},
+		{name: "empty list", packages: []string{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			project, vmName, options := vmFixture(t, "")
+			database, err := readVMDatabase()
+			assert.NilError(t, err)
+			database.PackageInstallationDone = test.packageInstallDone
+			assert.NilError(t, database.save())
+			config := DevelopmentConfig{Packages: test.packages}
+			err = prepareDevelopment(project, vmName, &config, nil, options.LimaCommand)
+			assert.NilError(t, err)
+
+			database, err = readVMDatabase()
+			assert.NilError(t, err)
+			packageQueries := 0
+			installations := 0
+			for _, operation := range database.Operations {
+				if len(operation) >= 5 && operation[4] == "dpkg-query" {
+					packageQueries++
+				}
+				if len(operation) >= 8 && isPackageInstallationCommand(operation[4:]) {
+					installations++
+				}
+			}
+			assert.Equal(t, packageQueries, test.wantPackageQueries)
+			assert.Equal(t, installations, test.wantInstallations)
+		})
+	}
+}
+
+func TestPreparationReportsBatchPackageFailures(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		failure string
+		noop    bool
+		want    string
+	}{
+		{name: "installation failure", failure: "package-install", want: "cannot prepare packages make, ninja-build"},
+		{name: "verification failure", noop: true, want: "installation did not provide the requested package"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			project, vmName, options := vmFixture(t, "")
+			t.Setenv(vmFailureEnv, test.failure)
+			if test.noop {
+				t.Setenv(vmPackageInstallNoopEnv, "1")
+			}
+			config := DevelopmentConfig{Packages: []string{"make", "ninja-build"}}
+			err := prepareDevelopment(project, vmName, &config, nil, options.LimaCommand)
+			assert.ErrorContains(t, err, test.want)
+		})
+	}
 }
 
 func TestMakeCommandPassesThroughGuestArgumentsAndExitStatus(t *testing.T) {

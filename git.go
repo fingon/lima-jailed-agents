@@ -309,9 +309,6 @@ func gitConfigWriteScript(relative string) (string, error) {
 }
 
 func prepareGit(project string, vmName string, limactlCommand string) error {
-	if err := ensureGuestPackage(project, vmName, gitCommand, limactlCommand); err != nil {
-		return ljaError("cannot prepare Git in VM %s: %w", vmName, err)
-	}
 	home, err := homeDirectory()
 	if err != nil {
 		return ljaError("cannot prepare Git in VM %s: %w", vmName, err)

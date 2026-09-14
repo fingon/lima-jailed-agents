@@ -296,10 +296,12 @@ filename constant is `.lja.yaml`.
 
 ## Guest preparation and agents
 
-Development packages are checked with `dpkg-query`. Missing packages are
-installed with `sudo apt-get update` and `sudo apt-get install -y PACKAGE`,
-then checked again. Agent installation is independent of the configured
-development package list.
+Development packages are checked with `dpkg-query`. Missing effective packages
+(configured packages plus `git` when `copy_git_config` is enabled) are installed
+together in one guest `sh -eu -c` sequence:
+`sudo apt-get update && sudo apt-get install -y PACKAGE...`. Each package is
+checked again after the batch. Agent installation is independent of the
+configured development package list.
 
 The shared Node recipe is:
 
