@@ -156,9 +156,11 @@ absent. It works even when existing mounts differ from the current storage
 configuration. Deletion removes the VM and its guest disk; host project files
 and agent state are preserved. Both bulk commands also accept `-a`.
 
-`create` prepares an absent VM (boot, packages, Git configuration, and setup)
-without launching an agent. An existing VM is left unchanged after mount
-validation, even if stopped.
+`create` prepares an absent VM (boot, packages, Git configuration, setup, and
+configured default agents) without launching an agent. An existing VM is left
+unchanged after mount validation when no default agents are configured. If
+defaults are configured, a stopped existing VM is started and those agents
+are installed or reused.
 
 `create --recreate` prepares a new VM before stopping and replacing the old
 one. It deletes the old guest disk only after the replacement starts under the
@@ -187,6 +189,7 @@ lima:
   cpus: 4
   memory: "8GiB"
 packages: [git, make, ninja-build]
+agents: [codex, claude]
 copy_git_config: true
 env:
   BUILD_MODE: development
@@ -217,22 +220,29 @@ lima: {}
 packages:
   - git
   - make
+agents: []
 copy_git_config: true
 env: {}
 env_passthrough: []
 setup: []
 ```
 
-`packages` replaces the inherited package list and is deduplicated. `env` is
-merged by name, with the project taking precedence. Setup commands and
-passthrough names append to the global values unless a project sets
-`inherit_setup` or `inherit_env_passthrough` to `false`. Commands run from the
-project root in separate `sh -eu -c` guest processes and may use guest `sudo`.
-They run for `shell`, agent launches, `update`, and VM creation; they must be
-idempotent. Missing packages are checked individually and installed together in
-one guest apt transaction; `git` is included automatically when
-`copy_git_config` is enabled. Recreation runs development setup once before
-promotion.
+`packages` and `agents` replace the inherited lists and are deduplicated. The
+project `agents` list therefore controls which agents are installed by
+default; an explicit empty list clears global defaults. `env` is merged by
+name, with the project taking precedence. Setup commands and passthrough names
+append to the global values unless a project sets `inherit_setup` or
+`inherit_env_passthrough` to `false`. Commands run from the project root in
+separate `sh -eu -c` guest processes and may use guest `sudo`. They run for
+`shell`, agent launches, `update`, and VM creation; they must be idempotent.
+Missing packages are checked individually and installed together in one guest
+apt transaction; `git` is included automatically when `copy_git_config` is
+enabled. Configured default agents are installed or reused during every
+preparation, including creation, shell, make, launches, and update. Shells and
+multi-agent launches expose configured agents through per-VM wrappers. An agent
+launch combines the selected agent, configured defaults, and any `--with-agent`
+values in stable deduplicated order. Recreation runs development setup once
+before promotion and prepares defaults on the replacement VM.
 
 Only explicitly named caller variables are forwarded. Missing passthrough
 variables are errors, empty values are preserved, and values are never stored

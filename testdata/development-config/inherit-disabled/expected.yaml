@@ -3,6 +3,7 @@ lima: {}
 packages:
   - git
   - make
+agents: []
 copy_git_config: true
 env: {}
 env_passthrough:

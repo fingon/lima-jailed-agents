@@ -19,6 +19,7 @@ const (
 	configGPGForwarding                 = "gpg_forwarding"
 	configLima                          = "lima"
 	configPackages                      = "packages"
+	configAgents                        = "agents"
 	configCopyGitConfig                 = "copy_git_config"
 	configEnvironment                   = "env"
 	configEnvironmentPassthrough        = "env_passthrough"
@@ -49,6 +50,7 @@ type DevelopmentConfig struct {
 	GPGForwarding  bool
 	Lima           map[string]any
 	Packages       []string
+	Agents         []string
 	CopyGitConfig  bool
 	Env            map[string]string
 	EnvPassthrough []string
@@ -59,6 +61,7 @@ type developmentConfigYAML struct {
 	GPGForwarding  bool              `yaml:"gpg_forwarding"`
 	Lima           map[string]any    `yaml:"lima"`
 	Packages       []string          `yaml:"packages"`
+	Agents         []string          `yaml:"agents"`
 	CopyGitConfig  bool              `yaml:"copy_git_config"`
 	Env            map[string]string `yaml:"env"`
 	EnvPassthrough []string          `yaml:"env_passthrough"`
@@ -69,6 +72,7 @@ func DefaultDevelopmentConfig() DevelopmentConfig {
 	return DevelopmentConfig{
 		Lima:           make(map[string]any),
 		Packages:       []string{gitCommand, makeCommand},
+		Agents:         []string{},
 		CopyGitConfig:  true,
 		Env:            make(map[string]string),
 		EnvPassthrough: []string{},
@@ -81,6 +85,7 @@ func (config DevelopmentConfig) clone() DevelopmentConfig {
 		GPGForwarding:  config.GPGForwarding,
 		Lima:           mergeLimaConfig(nil, config.Lima),
 		Packages:       append([]string{}, config.Packages...),
+		Agents:         append([]string{}, config.Agents...),
 		CopyGitConfig:  config.CopyGitConfig,
 		Env:            make(map[string]string, len(config.Env)),
 		EnvPassthrough: append([]string{}, config.EnvPassthrough...),
@@ -107,6 +112,7 @@ func (config DevelopmentConfig) AsYAML() developmentConfigYAML {
 		GPGForwarding:  config.GPGForwarding,
 		Lima:           mergeLimaConfig(nil, config.Lima),
 		Packages:       packages,
+		Agents:         append([]string{}, config.Agents...),
 		CopyGitConfig:  config.CopyGitConfig,
 		Env:            environment,
 		EnvPassthrough: passthrough,
@@ -149,6 +155,8 @@ type sourceDevelopmentConfig struct {
 	Lima                             map[string]any
 	Packages                         []string
 	HasPackages                      bool
+	Agents                           []string
+	HasAgents                        bool
 	CopyGitConfig                    bool
 	HasCopyGitConfig                 bool
 	Env                              map[string]string
@@ -333,7 +341,7 @@ func decodeDevelopmentConfig(content []byte, isProject bool) (sourceDevelopmentC
 		return sourceDevelopmentConfig{}, err
 	}
 	allowed := map[string]bool{
-		configGPGForwarding: true, configLima: true, configPackages: true, configCopyGitConfig: true, configEnvironment: true,
+		configGPGForwarding: true, configLima: true, configPackages: true, configAgents: true, configCopyGitConfig: true, configEnvironment: true,
 		configEnvironmentPassthrough: true, configSetup: true,
 	}
 	if isProject {
@@ -376,6 +384,18 @@ func decodeDevelopmentConfig(content []byte, isProject bool) (sourceDevelopmentC
 			}
 		}
 		decoded.Packages, decoded.HasPackages = packages, true
+	}
+	if node, present := values[configAgents]; present {
+		agents, err := decodeConfigArray(node, configAgents)
+		if err != nil {
+			return sourceDevelopmentConfig{}, err
+		}
+		for index, agentName := range agents {
+			if _, agentErr := agentSpec(agentName); agentErr != nil {
+				return sourceDevelopmentConfig{}, configNodeError(node.Content[index], "invalid agent: %v", agentErr)
+			}
+		}
+		decoded.Agents, decoded.HasAgents = agents, true
 	}
 	if node, present := values[configGPGForwarding]; present {
 		value, err := decodeConfigBool(node, configGPGForwarding)
@@ -454,6 +474,9 @@ func applyDevelopmentConfig(config DevelopmentConfig, source sourceDevelopmentCo
 	}
 	if source.HasPackages {
 		config.Packages = uniqueStrings(source.Packages)
+	}
+	if source.HasAgents {
+		config.Agents = uniqueStrings(source.Agents)
 	}
 	if source.HasCopyGitConfig {
 		config.CopyGitConfig = source.CopyGitConfig

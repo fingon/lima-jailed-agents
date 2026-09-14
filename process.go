@@ -170,6 +170,15 @@ func guestArgumentsWithUserPath(arguments []string) []string {
 	return append(wrapped, arguments...)
 }
 
+func guestArgumentsWithPath(arguments []string, path string) []string {
+	if path == "" {
+		return guestArgumentsWithUserPath(arguments)
+	}
+	pathScript := "set -eu\nPATH=" + shellQuote(path) + ":${PATH-}\nexport PATH\nexec \"$@\"\n"
+	wrapped := guestArgumentsWithUserPath([]string{shellCommand, shellCommandFlag, pathScript, programName})
+	return append(wrapped, arguments...)
+}
+
 func runGuest(project string, vmName string, arguments []string, options processOptions, environment map[string]string) (ProcessResult, error) {
 	if len(arguments) == 0 {
 		return ProcessResult{}, ljaError("cannot run an empty guest command")

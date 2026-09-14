@@ -690,3 +690,44 @@ func TestPreparationRecreatesOnce(t *testing.T) {
 		})
 	}
 }
+
+func TestRecreatePublishesConfiguredAgentWrappersUnderFinalName(t *testing.T) {
+	project, name, options := vmFixture(t, limaStatusRunning)
+	config := *options.Development
+	config.Agents = []string{codexAgentName, claudeAgentName}
+	options.Development = &config
+	options.Recreate = true
+
+	_, err := PrepareVM(project, options)
+	assert.NilError(t, err)
+
+	database, err := readVMDatabase()
+	assert.NilError(t, err)
+	finalWrapperPath := agentWrapperDirectory(name)
+	for _, operation := range database.Operations {
+		if len(operation) == 0 || !strings.Contains(strings.Join(operation, " "), "wrapper") {
+			continue
+		}
+		assert.Assert(t, strings.Contains(strings.Join(operation, " "), finalWrapperPath))
+	}
+	assert.Assert(t, strings.Contains(strings.Join(database.Operations[len(database.Operations)-1], " "), finalWrapperPath))
+}
+
+func TestUpdateConfiguredAgentInstallsOnce(t *testing.T) {
+	project, _, options := vmFixture(t, limaStatusRunning)
+	config := DevelopmentConfig{Agents: []string{codexAgentName}}
+	options.Development = &config
+
+	_, err := InstallAgent(project, codexAgentName, true, options)
+	assert.NilError(t, err)
+
+	database, err := readVMDatabase()
+	assert.NilError(t, err)
+	installations := 0
+	for _, operation := range database.Operations {
+		if strings.Contains(strings.Join(operation, " "), "npm install -g @openai/codex") {
+			installations++
+		}
+	}
+	assert.Equal(t, installations, 1)
+}

@@ -1,6 +1,7 @@
 gpg_forwarding: false
 lima: {}
 packages: []
+agents: []
 copy_git_config: true
 env: {}
 env_passthrough: []

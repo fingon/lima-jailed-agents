@@ -2,6 +2,9 @@
 packages:
   - ninja-build
   - ninja-build
+agents:
+  - opencode
+  - opencode
 copy_git_config: false
 env:
   BUILD_MODE: project

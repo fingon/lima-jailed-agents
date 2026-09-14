@@ -128,7 +128,8 @@ For project VM preparation the lifecycle is:
    `--mount-only` paths.
 7. Start a stopped VM, rejecting all other states.
 8. Reinspect and revalidate mounts and the running state.
-9. Prepare development packages, Git, and setup commands.
+9. Prepare development packages, Git, setup commands, and configured default
+   agents.
 
 The expected mount set is exact: no extra mounts, no duplicate entries, no
 read-only project/state mount, and no mount at a different guest path. A
@@ -150,30 +151,37 @@ Both bulk commands accept `-a`; the former `stop-all` command is removed.
 
 `CreateVM(project, WorkflowOptions)` and `lja create` use the same project
 lock as other preparation. Existing VMs are returned unchanged after mount
-validation; this no-op does not resolve environment passthrough or run setup.
-An absent VM is created, started, and prepared without installing or launching
-an agent. The CLI reports its name and status.
+validation when no default agents are configured; this no-op does not resolve
+environment passthrough or run setup. If defaults are configured, a stopped
+existing VM is started and the configured agents are prepared without rerunning
+development setup. An absent VM is created, started, and prepared without
+launching an agent; configured default agents are installed or reused. The CLI
+reports its name and status.
 
 `WorkflowOptions.Recreate` and the global `--recreate` flag request a fresh
 VM. The flag is accepted by create, shell, agent launches, and update, and
 rejected by config, status, stop, and delete. A flag after the passthrough
 separator belongs to the guest. Every preparation entry point enters the same
-replacement flow once; agent installation, trust, and wrappers run afterwards
-using the final VM name.
+replacement flow once; configured-agent installation and trust are prepared on
+the candidate, while wrappers are published after promotion under the final VM
+name.
 
 If the original is absent, use ordinary creation. Otherwise, reject an
 Installing VM, check `limactl rename --help`, allocate unique short
 `lja-new-*` and `lja-old-*` names, and log all three names before changing
 state. Retain the project lock throughout:
 
-1. Create, boot, validate mounts, and run development preparation on the
-   temporary VM using the current configuration and selected host state.
+1. Create, boot, validate mounts, and run development and configured-agent
+   preparation on the temporary VM using the current configuration and selected
+   host state. Defer wrapper publication until the replacement has its final
+   VM name.
 2. Stop the temporary VM, then stop the original if it was running.
 3. Rename the original to the backup name and the temporary VM to the
    deterministic project name, with `--tty=false`.
 4. Start the replacement under its final name, revalidate mounts and Running
    status, and probe guest connectivity.
-5. Delete the backup guest disk. Report cleanup failure without rolling back
+5. Delete the backup guest disk, publish configured-agent wrappers under the
+   final VM name, and report cleanup or wrapper failures without rolling back
    the working replacement. Continue the requested workflow without repeating
    development setup.
 
@@ -253,6 +261,7 @@ lima: {}
 packages:
   - git
   - make
+agents: []
 copy_git_config: true
 env: {}
 env_passthrough: []
@@ -287,7 +296,8 @@ lima:
   memory: "8GiB"
 ```
 
-Project package lists replace the inherited list and are deduplicated. Explicit
+Project package and agent lists replace the inherited lists and are deduplicated.
+An explicit empty `agents` list clears global agent defaults. Explicit
 environment values merge by name. Setup commands and passthrough names append
 unless the project disables inheritance. Each setup entry records its source
 and one-based command index for failure reporting. YAML comments and literal
@@ -338,13 +348,15 @@ permission options are detected in both `--option value`-style vectors and
 `--option=value` forms. Codex's `exec` subcommand gets its default after the
 subcommand.
 
-Additional agents are normalized and deduplicated with the selected agent. All
-requested agents receive installation checks, state directories, instruction
-refreshes, and Codex trust preparation. When more than one is requested, LJA
-creates per-VM wrappers in `/tmp/lja/<vm>/bin`. The launch prepends that
-directory to `PATH`; each wrapper restores only its own state environment and
-permission behavior, so an agent can invoke another by its ordinary guest
-executable name.
+Configured default agents are installed or reused during every preparation,
+including create, shell, make, agent launches, and update. They receive state
+directories, instruction refreshes, and Codex trust preparation. Shells and
+multi-agent launches expose them through per-VM wrappers in
+`/tmp/lja/<vm>/bin`. The launch prepends that directory to `PATH`; each wrapper
+restores only its own state environment and permission behavior, so an agent
+can invoke another by its ordinary guest executable name. Agent launches
+combine the selected agent, configured defaults, and `--with-agent` values in
+stable deduplicated order.
 
 ## Instructions and Codex trust
 

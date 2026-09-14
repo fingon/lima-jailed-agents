@@ -124,3 +124,16 @@ func TestGuestPathBootstrapRunsCommandProbe(t *testing.T) {
 	}
 	assert.Equal(t, string(output), executable+"\n")
 }
+
+func TestGuestArgumentsWithPathPreservesCommandArguments(t *testing.T) {
+	path := "/tmp/lja/lja-test/bin"
+	arguments := guestArgumentsWithPath([]string{"echo", "word with spaces"}, path)
+	assert.Equal(t, arguments[0], shellCommand)
+	assert.Equal(t, arguments[1], shellCommandFlag)
+	assert.Equal(t, arguments[3], programName)
+	assert.Equal(t, arguments[4], shellCommand)
+	assert.Equal(t, arguments[5], shellCommandFlag)
+	assert.Assert(t, strings.Contains(arguments[6], "PATH='"+path+"':${PATH-}"))
+	assert.Equal(t, arguments[7], programName)
+	assert.DeepEqual(t, arguments[8:], []string{"echo", "word with spaces"})
+}

@@ -101,13 +101,15 @@ func NormalizeAgentNames(selected string, additional []string) ([]string, error)
 }
 
 type WorkflowOptions struct {
-	gpg           *gpgWorkflow
-	Recreate      bool
-	StateRoot     string
-	Development   *DevelopmentConfig
-	Environment   map[string]string
-	LimaCommand   string
-	LockDirectory string
+	gpg                   *gpgWorkflow
+	Recreate              bool
+	StateRoot             string
+	Development           *DevelopmentConfig
+	Environment           map[string]string
+	LimaCommand           string
+	LockDirectory         string
+	agentTrustDirectories []string
+	agentUpdateName       string
 }
 
 func (options WorkflowOptions) limaCommand() string {
@@ -123,6 +125,28 @@ func developmentConfigOrDefault(config *DevelopmentConfig) DevelopmentConfig {
 		return defaultConfig
 	}
 	return config.clone()
+}
+
+func configuredAgentNames(config *DevelopmentConfig) ([]string, error) {
+	actualConfig := developmentConfigOrDefault(config)
+	names := uniqueStrings(actualConfig.Agents)
+	for _, name := range names {
+		if _, err := agentSpec(name); err != nil {
+			return nil, err
+		}
+	}
+	return names, nil
+}
+
+func effectiveAgentNames(selectedAgent string, withAgents []string, config *DevelopmentConfig) ([]string, error) {
+	configured, err := configuredAgentNames(config)
+	if err != nil {
+		return nil, err
+	}
+	additional := make([]string, 0, len(configured)+len(withAgents))
+	additional = append(additional, configured...)
+	additional = append(additional, withAgents...)
+	return normalizeAgentNames(selectedAgent, additional)
 }
 
 func guestPackageInstalled(project string, vmName string, packageName string, limactlCommand string) (bool, error) {
@@ -369,6 +393,17 @@ func InstallAgent(project string, agentName string, update bool, options Workflo
 	if err != nil {
 		return LimaInstance{}, err
 	}
+	configured, err := configuredAgentNames(options.Development)
+	if err != nil {
+		return LimaInstance{}, err
+	}
+	configuredAgents := make(map[string]bool, len(configured))
+	for _, name := range configured {
+		configuredAgents[name] = true
+	}
+	if update && configuredAgents[agentName] {
+		options.agentUpdateName = agentName
+	}
 	if err := validateProjectDirectory(canonicalProject); err != nil {
 		return LimaInstance{}, err
 	}
@@ -382,8 +417,10 @@ func InstallAgent(project string, agentName string, update bool, options Workflo
 		if prepareErr != nil {
 			return prepareErr
 		}
-		if _, installErr := installAgentLocked(canonicalProject, vmName, agent, update, options.limaCommand(), options.gpg.context()); installErr != nil {
-			return installErr
+		if !configuredAgents[agentName] {
+			if _, installErr := installAgentLocked(canonicalProject, vmName, agent, update, options.limaCommand(), options.gpg.context()); installErr != nil {
+				return installErr
+			}
 		}
 		returnValue = instance
 		return nil
@@ -511,6 +548,13 @@ func agentWrapperSetupScript(stateRoot string, vmName string, executables []Agen
 	if len(executables) == 0 {
 		return "", ljaError("cannot prepare agent wrappers without requested agents")
 	}
+	requested := make(map[string]bool, len(executables))
+	for _, executable := range executables {
+		if _, err := agentSpec(executable.Name); err != nil {
+			return "", err
+		}
+		requested[executable.Name] = true
+	}
 	wrapperDirectory := agentWrapperDirectory(vmName)
 	lines := []string{
 		"set -eu",
@@ -524,6 +568,11 @@ func agentWrapperSetupScript(stateRoot string, vmName string, executables []Agen
 		"wrapper_directory=" + shellQuote(wrapperDirectory),
 		"mkdir -p -- \"$wrapper_directory\"",
 		"chmod 700 \"$wrapper_directory\"",
+	}
+	for _, agentName := range AgentNames() {
+		if !requested[agentName] {
+			lines = append(lines, "rm -f -- "+shellQuote(filepath.Join(wrapperDirectory, agentName)))
+		}
 	}
 	for _, executable := range executables {
 		content, err := agentWrapperContent(stateRoot, executable.Name, executable.Path)
@@ -552,6 +601,57 @@ func PrepareAgentWrappers(project string, vmName string, stateRoot string, execu
 	return err
 }
 
+func prepareAgentNamesLocked(project string, vmName string, stateRoot string, agentNames []string, trustDirectories []string, lockDirectory string, limactlCommand string, prepareWrappers bool, updateAgentName string, contexts ...context.Context) error {
+	if stateRoot == "" {
+		stateRoot = project
+	}
+	executables := make([]AgentExecutable, 0, len(agentNames))
+	codexRequested := false
+	for _, agentName := range agentNames {
+		agent, err := agentSpec(agentName)
+		if err != nil {
+			return ljaError("cannot prepare agent %s in VM %s: %w", agentName, vmName, err)
+		}
+		executablePath, err := installAgentLocked(project, vmName, agent, agentName == updateAgentName, limactlCommand, contexts...)
+		if err != nil {
+			return ljaError("cannot prepare agent %s in VM %s: %w", agentName, vmName, err)
+		}
+		if _, err := EnsureAgentStateDirectories(stateRoot, agentName); err != nil {
+			return ljaError("cannot prepare agent %s in VM %s: %w", agentName, vmName, err)
+		}
+		if _, err := RefreshAgentInstructions(stateRoot, agentName, nil); err != nil {
+			return ljaError("cannot prepare agent %s in VM %s: %w", agentName, vmName, err)
+		}
+		if agentName == codexAgentName {
+			codexRequested = true
+		}
+		executables = append(executables, AgentExecutable{Name: agentName, Path: executablePath})
+	}
+	if codexRequested && len(trustDirectories) != 0 {
+		if err := ensureCodexDirectoryTrust(stateRoot, trustDirectories, lockDirectory); err != nil {
+			return ljaError("cannot prepare agent %s in VM %s: %w", codexAgentName, vmName, err)
+		}
+	}
+	if prepareWrappers && len(executables) != 0 {
+		if err := PrepareAgentWrappers(project, vmName, stateRoot, executables, limactlCommand); err != nil {
+			return ljaError("cannot prepare agent wrappers in VM %s: %w", vmName, err)
+		}
+	}
+	return nil
+}
+
+func prepareConfiguredAgentsLocked(project string, vmName string, stateRoot string, development *DevelopmentConfig, trustDirectories []string, lockDirectory string, limactlCommand string, updateAgentName string, prepareWrappers bool, workflows ...*gpgWorkflow) error {
+	agentNames, err := configuredAgentNames(development)
+	if err != nil {
+		return err
+	}
+	var contexts []context.Context
+	if len(workflows) > 0 && workflows[0] != nil {
+		contexts = []context.Context{workflows[0].context()}
+	}
+	return prepareAgentNamesLocked(project, vmName, stateRoot, agentNames, trustDirectories, lockDirectory, limactlCommand, prepareWrappers, updateAgentName, contexts...)
+}
+
 func prepareAgents(project string, selectedAgent string, withAgents []string, trustDirectories []string, options WorkflowOptions) (returnedInstance LimaInstance, returnErr error) {
 	cleanup, err := options.ownGPGWorkflow()
 	if err != nil {
@@ -563,7 +663,7 @@ func prepareAgents(project string, selectedAgent string, withAgents []string, tr
 	if err != nil {
 		return LimaInstance{}, err
 	}
-	agentNames, err := normalizeAgentNames(selectedAgent, withAgents)
+	agentNames, err := effectiveAgentNames(selectedAgent, withAgents, options.Development)
 	if err != nil {
 		return LimaInstance{}, err
 	}
@@ -577,6 +677,10 @@ func prepareAgents(project string, selectedAgent string, withAgents []string, tr
 	if trustDirectories == nil {
 		trustDirectories = []string{canonicalProject}
 	}
+	preparationConfig := developmentConfigOrDefault(options.Development)
+	preparationConfig.Agents = []string{}
+	options.Development = &preparationConfig
+	options.agentTrustDirectories = append([]string{}, trustDirectories...)
 	stateRoot := options.StateRoot
 	if stateRoot == "" {
 		stateRoot = canonicalProject
@@ -587,33 +691,8 @@ func prepareAgents(project string, selectedAgent string, withAgents []string, tr
 		if prepareErr != nil {
 			return prepareErr
 		}
-		executables := make([]AgentExecutable, 0, len(agentNames))
-		for _, agentName := range agentNames {
-			agent, agentErr := agentSpec(agentName)
-			if agentErr != nil {
-				return ljaError("cannot prepare agent %s in VM %s: %w", agentName, vmName, agentErr)
-			}
-			executablePath, installErr := installAgentLocked(canonicalProject, vmName, agent, false, options.limaCommand(), options.gpg.context())
-			if installErr != nil {
-				return ljaError("cannot prepare agent %s in VM %s: %w", agentName, vmName, installErr)
-			}
-			if _, stateErr := EnsureAgentStateDirectories(stateRoot, agentName); stateErr != nil {
-				return ljaError("cannot prepare agent %s in VM %s: %w", agentName, vmName, stateErr)
-			}
-			if _, instructionErr := RefreshAgentInstructions(stateRoot, agentName, nil); instructionErr != nil {
-				return ljaError("cannot prepare agent %s in VM %s: %w", agentName, vmName, instructionErr)
-			}
-			if agentName == codexAgentName && len(trustDirectories) != 0 {
-				if trustErr := ensureCodexDirectoryTrust(stateRoot, trustDirectories, options.LockDirectory); trustErr != nil {
-					return ljaError("cannot prepare agent %s in VM %s: %w", agentName, vmName, trustErr)
-				}
-			}
-			executables = append(executables, AgentExecutable{Name: agentName, Path: executablePath})
-		}
-		if len(agentNames) > 1 {
-			if wrapperErr := PrepareAgentWrappers(canonicalProject, vmName, stateRoot, executables, options.limaCommand()); wrapperErr != nil {
-				return ljaError("cannot prepare agent wrappers in VM %s: %w", vmName, wrapperErr)
-			}
+		if err := prepareAgentNamesLocked(canonicalProject, vmName, stateRoot, agentNames, trustDirectories, options.LockDirectory, options.limaCommand(), len(agentNames) > 1, "", options.gpg.context()); err != nil {
+			return err
 		}
 		returnValue = instance
 		return nil
@@ -699,6 +778,10 @@ func RunAgent(project string, agentName string, arguments []string, withAgents [
 	if isLoginCommand(agentName, arguments) {
 		trustDirectories = []string{}
 	}
+	agentNames, err := effectiveAgentNames(agentName, withAgents, options.Development)
+	if err != nil {
+		return 0, err
+	}
 	instance, err := prepareAgents(canonicalProject, agentName, withAgents, trustDirectories, options)
 	if err != nil {
 		return 0, err
@@ -731,16 +814,10 @@ func RunAgent(project string, agentName string, arguments []string, withAgents [
 		return 0, err
 	}
 	guestArguments := []string{agent.Executable}
-	if len(withAgents) != 0 {
-		names, normalizeErr := normalizeAgentNames(agentName, withAgents)
-		if normalizeErr != nil {
-			return 0, normalizeErr
-		}
-		if len(names) > 1 {
-			wrapperDirectory := agentWrapperDirectory(instance.Name)
-			launchScript := "export PATH=" + shellQuote(wrapperDirectory) + ":${PATH-}\nexec " + shellQuote(agent.Executable) + " \"$@\"\n"
-			guestArguments = []string{shellCommand, shellCommandFlag, launchScript, programName}
-		}
+	if len(agentNames) > 1 {
+		wrapperDirectory := agentWrapperDirectory(instance.Name)
+		launchScript := "export PATH=" + shellQuote(wrapperDirectory) + ":${PATH-}\nexec " + shellQuote(agent.Executable) + " \"$@\"\n"
+		guestArguments = []string{shellCommand, shellCommandFlag, launchScript, programName}
 	}
 	guestArguments = append(guestArguments, invocation...)
 	environment, err = options.gpg.environment(canonicalProject, instance.Name, options.limaCommand(), environment)
@@ -795,6 +872,11 @@ func OpenShell(project string, arguments []string, workingDirectory string, opti
 			return 0, err
 		}
 	}
+	configured, err := configuredAgentNames(options.Development)
+	if err != nil {
+		return 0, err
+	}
+	options.agentTrustDirectories = []string{canonicalProject, workingDirectory}
 	if _, err := sortedEnvironmentArguments(options.Environment); err != nil {
 		return 0, err
 	}
@@ -814,7 +896,11 @@ func OpenShell(project string, arguments []string, workingDirectory string, opti
 	if len(forwarded) == 0 {
 		forwarded = []string{shellCommand, shellCommandFlag, `exec "${SHELL:-/bin/sh}" -l`}
 	}
-	forwarded = guestArgumentsWithUserPath(forwarded)
+	if len(configured) != 0 {
+		forwarded = guestArgumentsWithPath(forwarded, agentWrapperDirectory(instance.Name))
+	} else {
+		forwarded = guestArgumentsWithUserPath(forwarded)
+	}
 	limaArguments := []string{"shell", limaWorkdirFlag, workingDirectory, instance.Name}
 	limaArguments = append(limaArguments, environmentArguments...)
 	limaArguments = append(limaArguments, forwarded...)

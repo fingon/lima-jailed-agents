@@ -2,6 +2,8 @@ gpg_forwarding: false
 lima: {}
 packages:
   - ninja-build
+agents:
+  - opencode
 copy_git_config: false
 env:
   BUILD_COUNT: "2"

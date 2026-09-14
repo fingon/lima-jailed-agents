@@ -57,6 +57,7 @@ func TestDevelopmentConfigurationLayeringAndEnvironment(t *testing.T) {
 	config, err := loadDevelopmentConfig(project, map[string]string{xdgConfigHomeEnv: configHome}, host)
 	assert.NilError(t, err)
 	assert.DeepEqual(t, config.Packages, []string{"ninja-build"})
+	assert.DeepEqual(t, config.Agents, []string{openCodeAgentName})
 	assert.Equal(t, config.CopyGitConfig, false)
 	assert.DeepEqual(t, config.Env, map[string]string{
 		"BUILD_COUNT":   "2",
@@ -77,6 +78,21 @@ func TestDevelopmentConfigurationLayeringAndEnvironment(t *testing.T) {
 	})
 }
 
+func TestDevelopmentConfigurationProjectAgentsCanClearGlobalDefaults(t *testing.T) {
+	root := t.TempDir()
+	project := filepath.Join(root, "project")
+	configHome := filepath.Join(root, "config")
+	assert.NilError(t, os.Mkdir(project, 0o755))
+	globalPath := filepath.Join(configHome, "lja", globalConfigName)
+	assert.NilError(t, os.MkdirAll(filepath.Dir(globalPath), 0o755))
+	assert.NilError(t, os.WriteFile(globalPath, []byte("agents: [codex, claude]\n"), 0o600))
+	assert.NilError(t, os.WriteFile(filepath.Join(project, projectConfigName), []byte("agents: []\n"), 0o600))
+
+	config, err := loadDevelopmentConfig(project, map[string]string{xdgConfigHomeEnv: configHome}, root)
+	assert.NilError(t, err)
+	assert.DeepEqual(t, config.Agents, []string{})
+}
+
 func TestDevelopmentConfigurationRejectsManagedEnvironment(t *testing.T) {
 	err := ValidateDevelopmentConfig([]byte(`{"env":{"CODEX_HOME":"/tmp/state"}}`), true)
 	assert.ErrorContains(t, err, "managed by LJA")
@@ -90,6 +106,9 @@ func TestDevelopmentConfigurationAcceptsYAMLAndPreservesPresence(t *testing.T) {
 packages:
   - git
   - make
+agents:
+  - codex
+  - claude
 copy_git_config: false
 env:
   BUILD_MODE: development
@@ -107,6 +126,8 @@ inherit_env_passthrough: true
 	assert.NilError(t, err)
 	assert.DeepEqual(t, decoded.Packages, []string{"git", "make"})
 	assert.Equal(t, decoded.HasPackages, true)
+	assert.DeepEqual(t, decoded.Agents, []string{codexAgentName, claudeAgentName})
+	assert.Equal(t, decoded.HasAgents, true)
 	assert.Equal(t, decoded.CopyGitConfig, false)
 	assert.Equal(t, decoded.HasCopyGitConfig, true)
 	assert.DeepEqual(t, decoded.Env, map[string]string{"BUILD_MODE": "development", "BUILD_COUNT": "3"})
@@ -123,6 +144,7 @@ inherit_env_passthrough: true
 	decoded, err = decodeDevelopmentConfig([]byte("{}\n"), true)
 	assert.NilError(t, err)
 	assert.Equal(t, decoded.HasPackages, false)
+	assert.Equal(t, decoded.HasAgents, false)
 	assert.Equal(t, decoded.HasCopyGitConfig, false)
 	assert.Equal(t, decoded.HasEnv, false)
 	assert.Equal(t, decoded.HasEnvPassthrough, false)
@@ -142,6 +164,7 @@ func TestDevelopmentConfigurationRejectsInvalidYAML(t *testing.T) {
 		{name: "null environment value", content: []byte("env:\n  BUILD_MODE: null\n"), want: "env must be a mapping with string values"},
 		{name: "scalar coercion", content: []byte("copy_git_config: \"true\"\n"), want: "copy_git_config must be a boolean"},
 		{name: "array scalar coercion", content: []byte("packages: [git, true]\n"), want: "packages must be a string"},
+		{name: "unknown agent", content: []byte("agents: [unknown]\n"), want: "unknown agent"},
 		{name: "root sequence", content: []byte("- git\n"), want: "configuration must be a mapping"},
 		{name: "multiple documents", content: []byte("{}\n---\n{}\n"), want: "single YAML document"},
 		{name: "empty input", content: []byte("# comment only\n"), want: "must contain a YAML document"},
@@ -231,6 +254,7 @@ func TestExplicitProjectSelectionUsesExactDirectory(t *testing.T) {
 func TestDevelopmentConfigurationYAMLOutputIsDeterministic(t *testing.T) {
 	config := DevelopmentConfig{
 		Packages:      []string{"make", "git"},
+		Agents:        []string{claudeAgentName},
 		CopyGitConfig: false,
 		Env: map[string]string{
 			"Z_LAST":  "last",
@@ -239,7 +263,7 @@ func TestDevelopmentConfigurationYAMLOutputIsDeterministic(t *testing.T) {
 		EnvPassthrough: []string{"TOKEN"},
 		Setup:          []SetupCommand{{Source: "/private/source.yaml", Index: 7, Command: "make dep\nmake build\n"}},
 	}
-	want := "gpg_forwarding: false\nlima: {}\npackages:\n  - make\n  - git\ncopy_git_config: false\nenv:\n  A_FIRST: first\n  Z_LAST: last\nenv_passthrough:\n  - TOKEN\nsetup:\n  - |\n    make dep\n    make build\n"
+	want := "gpg_forwarding: false\nlima: {}\npackages:\n  - make\n  - git\nagents:\n  - claude\ncopy_git_config: false\nenv:\n  A_FIRST: first\n  Z_LAST: last\nenv_passthrough:\n  - TOKEN\nsetup:\n  - |\n    make dep\n    make build\n"
 	encoded, err := yamlConfiguration(config)
 	assert.NilError(t, err)
 	assert.Equal(t, string(encoded), want)
@@ -253,6 +277,7 @@ func TestDevelopmentConfigurationYAMLOutputIsDeterministic(t *testing.T) {
 	assert.NilError(t, err)
 	assert.Assert(t, strings.Contains(string(empty), "env: {}\n"))
 	assert.Assert(t, strings.Contains(string(empty), "env_passthrough: []\n"))
+	assert.Assert(t, strings.Contains(string(empty), "agents: []\n"))
 	assert.Assert(t, strings.Contains(string(empty), "setup: []\n"))
 	assert.Assert(t, strings.HasSuffix(string(empty), "\n"))
 }
@@ -264,6 +289,7 @@ func TestDevelopmentConfigurationFixtures(t *testing.T) {
 		projectFixture    string
 		expectedFixture   string
 		wantPackages      []string
+		wantAgents        []string
 		wantCopyGitConfig bool
 		wantEnvironment   map[string]string
 		wantPassthrough   []string
@@ -274,6 +300,7 @@ func TestDevelopmentConfigurationFixtures(t *testing.T) {
 			name:              "missing files",
 			expectedFixture:   "missing/expected.yaml",
 			wantPackages:      []string{gitCommand, makeCommand},
+			wantAgents:        []string{},
 			wantCopyGitConfig: true,
 			wantEnvironment:   map[string]string{},
 			wantPassthrough:   []string{},
@@ -286,6 +313,7 @@ func TestDevelopmentConfigurationFixtures(t *testing.T) {
 			projectFixture:    "empty/project.yaml",
 			expectedFixture:   "empty/expected.yaml",
 			wantPackages:      []string{gitCommand, makeCommand},
+			wantAgents:        []string{},
 			wantCopyGitConfig: true,
 			wantEnvironment:   map[string]string{},
 			wantPassthrough:   []string{},
@@ -297,6 +325,7 @@ func TestDevelopmentConfigurationFixtures(t *testing.T) {
 			projectFixture:    "explicit-empty/project.yaml",
 			expectedFixture:   "explicit-empty/expected.yaml",
 			wantPackages:      []string{},
+			wantAgents:        []string{},
 			wantCopyGitConfig: true,
 			wantEnvironment:   map[string]string{},
 			wantPassthrough:   []string{},
@@ -309,6 +338,7 @@ func TestDevelopmentConfigurationFixtures(t *testing.T) {
 			projectFixture:    "layered/project.yaml",
 			expectedFixture:   "layered/expected.yaml",
 			wantPackages:      []string{"ninja-build"},
+			wantAgents:        []string{openCodeAgentName},
 			wantCopyGitConfig: false,
 			wantEnvironment: map[string]string{
 				"BUILD_COUNT":   "2",
@@ -327,6 +357,7 @@ func TestDevelopmentConfigurationFixtures(t *testing.T) {
 			projectFixture:    "inherit-disabled/project.yaml",
 			expectedFixture:   "inherit-disabled/expected.yaml",
 			wantPackages:      []string{gitCommand, makeCommand},
+			wantAgents:        []string{},
 			wantCopyGitConfig: true,
 			wantEnvironment:   map[string]string{},
 			wantPassthrough:   []string{"PROJECT_TOKEN"},
@@ -353,6 +384,7 @@ func TestDevelopmentConfigurationFixtures(t *testing.T) {
 			config, err := loadDevelopmentConfig(project, map[string]string{xdgConfigHomeEnv: configHome}, root)
 			assert.NilError(t, err)
 			assert.DeepEqual(t, config.Packages, test.wantPackages)
+			assert.DeepEqual(t, config.Agents, test.wantAgents)
 			assert.Equal(t, config.CopyGitConfig, test.wantCopyGitConfig)
 			assert.DeepEqual(t, config.Env, test.wantEnvironment)
 			assert.DeepEqual(t, config.EnvPassthrough, test.wantPassthrough)
@@ -497,6 +529,77 @@ func TestAgentInvocationAndWrappers(t *testing.T) {
 	assert.Assert(t, strings.Contains(content, "unset "+codeXHomeEnvironment))
 	assert.Assert(t, strings.Contains(content, codeXPermissionFlag))
 	assert.Assert(t, strings.Contains(content, "login"))
+
+	script, err := agentWrapperSetupScript(state, "test-vm", []AgentExecutable{{Name: codexAgentName, Path: "/usr/bin/codex"}})
+	assert.NilError(t, err)
+	assert.Assert(t, strings.Contains(script, "rm -f -- '/tmp/lja/test-vm/bin/claude'"))
+	assert.Assert(t, !strings.Contains(script, "rm -f -- '/tmp/lja/test-vm/bin/codex'"))
+}
+
+func TestConfiguredAgentNames(t *testing.T) {
+	config := &DevelopmentConfig{Agents: []string{claudeAgentName, codexAgentName, claudeAgentName}}
+	configured, err := configuredAgentNames(config)
+	assert.NilError(t, err)
+	assert.DeepEqual(t, configured, []string{claudeAgentName, codexAgentName})
+
+	effective, err := effectiveAgentNames(codexAgentName, []string{openCodeAgentName, claudeAgentName}, config)
+	assert.NilError(t, err)
+	assert.DeepEqual(t, effective, []string{codexAgentName, claudeAgentName, openCodeAgentName})
+
+	_, err = configuredAgentNames(&DevelopmentConfig{Agents: []string{"unknown"}})
+	assert.ErrorContains(t, err, "unknown agent")
+}
+
+func TestConfiguredAgentsAreAvailableToShell(t *testing.T) {
+	project, vmName, options := vmFixture(t, "")
+	config := DevelopmentConfig{Agents: []string{codexAgentName, claudeAgentName}}
+	options.Development = &config
+
+	code, err := OpenShell(project, []string{"echo", "agent"}, project, options)
+	assert.NilError(t, err)
+	assert.Equal(t, code, 0)
+
+	database, err := readVMDatabase()
+	assert.NilError(t, err)
+	var wrapperScript string
+	for _, operation := range database.Operations {
+		if len(operation) > 0 && operation[len(operation)-1] != "agent" && strings.Contains(strings.Join(operation, " "), agentWrapperDirectory(vmName)) {
+			wrapperScript = operation[len(operation)-1]
+		}
+	}
+	assert.Assert(t, strings.Contains(wrapperScript, agentWrapperDirectory(vmName)+"/codex"))
+	assert.Assert(t, strings.Contains(wrapperScript, agentWrapperDirectory(vmName)+"/claude"))
+
+	last := database.Operations[len(database.Operations)-1]
+	assert.Assert(t, strings.Contains(last[10], "PATH='"+agentWrapperDirectory(vmName)+"':${PATH-}"))
+	assert.DeepEqual(t, last[12:], []string{"echo", "agent"})
+}
+
+func TestCreateEnsuresConfiguredAgentsOnExistingVM(t *testing.T) {
+	for _, status := range []string{limaStatusRunning, limaStatusStopped} {
+		t.Run(status, func(t *testing.T) {
+			project, vmName, options := vmFixture(t, status)
+			config := DevelopmentConfig{Agents: []string{codexAgentName}}
+			options.Development = &config
+
+			instance, err := CreateVM(project, options)
+			assert.NilError(t, err)
+			assert.Equal(t, instance.Status, limaStatusRunning)
+
+			database, err := readVMDatabase()
+			assert.NilError(t, err)
+			for _, operation := range database.Operations {
+				assert.Assert(t, operation[0] != testSetupCommand)
+			}
+			expectedOperations := 3
+			if status == limaStatusStopped {
+				assert.Equal(t, database.Operations[0][0], "start")
+				expectedOperations++
+			}
+			assert.Equal(t, len(database.Operations), expectedOperations)
+			assert.Assert(t, strings.Contains(strings.Join(database.Operations[len(database.Operations)-1], " "), agentWrapperDirectory(vmName)))
+		})
+	}
 }
 
 func TestGuestProcessPreservesArgumentAndEnvironmentBoundaries(t *testing.T) {
