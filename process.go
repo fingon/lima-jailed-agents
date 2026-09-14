@@ -64,8 +64,11 @@ if command -v go >/dev/null 2>&1; then
     fi
 fi
 export PATH
-if [ "${1-}" = "` + guestCommandProbe + `" ]; then
-    "$@"
+if [ "${1-}" = "` + guestCommandProbe + `" ] && [ "${2-}" = "` + guestCommandProbeFlag + `" ]; then
+    if "$@"; then
+        exit 0
+    fi
+    exit 1
 else
     exec "$@"
 fi

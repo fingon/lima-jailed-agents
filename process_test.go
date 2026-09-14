@@ -123,6 +123,16 @@ func TestGuestPathBootstrapRunsCommandProbe(t *testing.T) {
 		return
 	}
 	assert.Equal(t, string(output), executable+"\n")
+
+	for _, agentName := range []string{claudeAgentName, openCodeAgentName} {
+		t.Run(agentName+" is missing", func(t *testing.T) {
+			command := exec.Command("/bin/sh", commandArguments[:3]...)
+			command.Args = append(command.Args, guestCommandProbe, guestCommandProbeFlag, agentName)
+			command.Env = []string{"PATH=" + root}
+			err := command.Run()
+			assert.ErrorContains(t, err, "exit status 1")
+		})
+	}
 }
 
 func TestGuestArgumentsWithPathPreservesCommandArguments(t *testing.T) {
