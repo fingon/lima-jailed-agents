@@ -285,6 +285,7 @@ guest-home-relative locations. Files outside the home directory are relocated
 under `~/.config/lja/git/includes/` and references are rewritten. Host files are
 never modified; guest copies are refreshed on preparation. Symlinked guest
 destination parents and files are rejected.
+Host Git failures include Git's diagnostic message to help resolve setup errors.
 
 On each agent preparation, host-wide instruction files are refreshed into the
 selected state root:

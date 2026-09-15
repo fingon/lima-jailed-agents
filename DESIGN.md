@@ -405,6 +405,9 @@ of the contract. The host's separate Codex configuration is not edited.
 
 ## Git configuration
 
+Host Git failures report the config path, exit code, and nonempty stderr
+diagnostics. Configuration output on stdout is kept separate from errors.
+
 Host Git is queried with `--no-includes`; LJA follows the root `.gitconfig`, all
 `include.path` and `includeIf.*.path` references, and `core.excludesFile` values
 it discovers. Relative references resolve against their source file. Host-home

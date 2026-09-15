@@ -44,6 +44,9 @@ func hostGitConfig(path string, arguments ...string) ([]byte, error) {
 	if err := command.Run(); err != nil {
 		var exitError *exec.ExitError
 		if errors.As(err, &exitError) {
+			if diagnostic := strings.TrimSpace(stderr.String()); diagnostic != "" {
+				return nil, ljaError("cannot process Git config %s: Git exited %d: %s", path, exitError.ExitCode(), diagnostic)
+			}
 			return nil, ljaError("cannot process Git config %s: Git exited %d", path, exitError.ExitCode())
 		}
 		return nil, ljaError("cannot run host Git for config %s: %w", path, err)
