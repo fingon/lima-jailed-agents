@@ -317,9 +317,9 @@ behavior. Enabled work workflows resolve a nonempty host `GH_TOKEN`, then
 from host home with a 30-second timeout. Tokens are validated as one line
 without control characters, retained only in the invocation, and reused during
 recreation. Configuration inspection, lifecycle-only commands, and an existing
-VM no-op create do not resolve credentials. Guest token delivery and Git
-delivery is described in the guest preparation section below. Invocation-scoped
-Git runtime configuration remains planned.
+VM no-op create do not resolve credentials. Guest token delivery and
+invocation-scoped Git runtime configuration are described in the guest
+preparation section below.
 
 Caller environment values are read only when an operation needs to prepare a
 VM. A passthrough name must exist, while an explicit `env` value takes
@@ -573,9 +573,10 @@ complete a partial transfer. The host configuration is never modified.
 ## Planned: GitHub authentication
 
 This section records the remaining managed GitHub integration behavior. The
-configuration shape, host token resolution, guest dependencies, and token
-delivery are current; invocation-scoped Git configuration remains planned. The
-tasks in [TODO.md](TODO.md#github-authentication) cover the remaining work.
+configuration shape, host token resolution, guest dependencies, token delivery,
+and invocation-scoped Git configuration are current. The tasks in
+[TODO.md](TODO.md#github-authentication) cover the remaining validation and
+documentation work.
 Existing manual environment passthrough, package configuration, and setup remain
 available.
 Managed support initially targets `github.com`; Enterprise hosts, SSH-agent
@@ -650,24 +651,26 @@ installation commands do not receive the token. LJA does not run an
 unconditional GitHub API probe during preparation: actual GitHub operations
 report expired credentials, insufficient permissions, and network failures.
 
-The remaining planned Git integration will use Git's `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_<n>`, and
-`GIT_CONFIG_VALUE_<n>` environment entries for temporary runtime settings.
-Preserve valid existing runtime entries and append managed entries; reject
-malformed existing entries instead of discarding them. For
+For Git commands in the invocation, LJA uses Git's `GIT_CONFIG_COUNT`,
+`GIT_CONFIG_KEY_<n>`, and `GIT_CONFIG_VALUE_<n>` environment entries for
+temporary runtime settings. It preserves valid existing runtime entries and
+appends managed entries; malformed existing entries are rejected instead of
+discarded. For
 `credential.https://github.com.helper`, append an empty value to reset inherited
 helpers, followed by `!gh auth git-credential`. This provides the relevant
 credential integration without persistent `gh auth setup-git` changes. See
 [Git runtime configuration](https://git-scm.com/docs/git-config) and
 [GitHub's credential integration](https://cli.github.com/manual/gh_auth_setup-git).
 
-Append invocation-scoped `url.https://github.com/.insteadOf` entries for
+LJA appends invocation-scoped `url.https://github.com/.insteadOf` entries for
 `git@github.com:` and `ssh://git@github.com/`. These allow existing SSH remotes
 to use HTTPS authentication without editing shared repository remotes or host
-configuration. Verify interaction with copied credential helpers and URL
-rewrites; report conflicting rules that prevent the intended HTTPS transport
-instead of silently attempting SSH. Other Git hosts retain their configuration.
+configuration. Copied GitHub URL rules that prevent the intended HTTPS
+transport are reported instead of silently attempting SSH; inherited GitHub
+credential helpers are reset by the invocation-scoped helper entries. Other
+Git hosts retain their configuration.
 
-Do not run persistent `gh auth login`, copy host GitHub credential stores, or
+LJA does not run persistent `gh auth login`, copy host GitHub credential stores, or
 place tokens in Git URLs. Setup and launched commands share the invocation's
 token and Git settings; concurrent invocations must not overwrite one another's
 credentials or Git authentication settings. Disabling support on a subsequent

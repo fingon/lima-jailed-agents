@@ -12,7 +12,9 @@ import (
 	"os/user"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"unicode"
 )
 
 const (
@@ -25,7 +27,208 @@ const (
 	gitPathKeySuffix        = ".path"
 	gitExcludesFileKey      = "core.excludesfile"
 	gitConfigWriteTemporary = ".lja-git.XXXXXXXXXX"
+	gitConfigCountEnv       = "GIT_CONFIG_COUNT"
+	gitConfigKeyEnvPrefix   = "GIT_CONFIG_KEY_"
+	gitConfigValueEnvPrefix = "GIT_CONFIG_VALUE_"
+	githubHTTPSBase         = "https://github.com/"
+	githubCredentialKey     = "credential.https://github.com.helper"
+	githubGitHelper         = "!gh auth git-credential"
 )
+
+var githubURLInputPrefixes = []string{
+	"git@github.com:",
+	"ssh://git@github.com/",
+	"https://github.com/",
+}
+
+type gitConfigEnvironmentEntry struct {
+	key   string
+	value string
+}
+
+type gitURLRewrite struct {
+	path  string
+	key   string
+	value string
+	base  string
+}
+
+func parseGitConfigEnvironment(environment map[string]string) ([]gitConfigEnvironmentEntry, error) {
+	countValue, countPresent := environment[gitConfigCountEnv]
+	keyNames := make(map[int]string)
+	valueNames := make(map[int]string)
+	parseNames := func(prefix string, destination map[int]string) error {
+		for name := range environment {
+			if !strings.HasPrefix(name, prefix) {
+				continue
+			}
+			suffix := strings.TrimPrefix(name, prefix)
+			index, err := strconv.Atoi(suffix)
+			if suffix == "" || err != nil || index < 0 || strconv.Itoa(index) != suffix {
+				return ljaError("invalid %s environment variable %s", prefix, name)
+			}
+			if _, present := destination[index]; present {
+				return ljaError("duplicate %s environment index %d", prefix, index)
+			}
+			destination[index] = name
+		}
+		return nil
+	}
+	if err := parseNames(gitConfigKeyEnvPrefix, keyNames); err != nil {
+		return nil, err
+	}
+	if err := parseNames(gitConfigValueEnvPrefix, valueNames); err != nil {
+		return nil, err
+	}
+	if !countPresent {
+		if len(keyNames) != 0 || len(valueNames) != 0 {
+			return nil, ljaError("%s is required when GIT_CONFIG_KEY_* or GIT_CONFIG_VALUE_* is set", gitConfigCountEnv)
+		}
+		return nil, nil
+	}
+	count, err := strconv.Atoi(countValue)
+	if err != nil || count < 0 {
+		return nil, ljaError("invalid %s value", gitConfigCountEnv)
+	}
+	if count > len(environment) {
+		return nil, ljaError("%s is missing indexed entries", gitConfigCountEnv)
+	}
+	for index := range keyNames {
+		if index >= count {
+			return nil, ljaError("GIT_CONFIG_KEY_%d is outside %s", index, gitConfigCountEnv)
+		}
+	}
+	for index := range valueNames {
+		if index >= count {
+			return nil, ljaError("GIT_CONFIG_VALUE_%d is outside %s", index, gitConfigCountEnv)
+		}
+	}
+	entries := make([]gitConfigEnvironmentEntry, count)
+	for index := 0; index < count; index++ {
+		keyName, keyPresent := keyNames[index]
+		valueName, valuePresent := valueNames[index]
+		if !keyPresent || !valuePresent {
+			return nil, ljaError("%s is missing GIT_CONFIG entry %d", gitConfigCountEnv, index)
+		}
+		key := environment[keyName]
+		value := environment[valueName]
+		if key == "" || strings.IndexByte(key, 0) >= 0 || strings.ContainsAny(key, "=") {
+			return nil, ljaError("GIT_CONFIG_KEY_%d is invalid", index)
+		}
+		for _, character := range key {
+			if unicode.IsControl(character) || unicode.IsSpace(character) {
+				return nil, ljaError("GIT_CONFIG_KEY_%d is invalid", index)
+			}
+		}
+		if strings.IndexByte(value, 0) >= 0 {
+			return nil, ljaError("GIT_CONFIG_VALUE_%d contains a NUL character", index)
+		}
+		entries[index] = gitConfigEnvironmentEntry{key: key, value: value}
+	}
+	return entries, nil
+}
+
+func githubGitEnvironment(environment map[string]string) (map[string]string, error) {
+	entries, err := parseGitConfigEnvironment(environment)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]string, len(environment)+5)
+	for name, value := range environment {
+		result[name] = value
+	}
+	managed := []gitConfigEnvironmentEntry{
+		{key: githubCredentialKey, value: ""},
+		{key: githubCredentialKey, value: githubGitHelper},
+		{key: "url." + githubHTTPSBase + ".insteadOf", value: githubURLInputPrefixes[0]},
+		{key: "url." + githubHTTPSBase + ".insteadOf", value: githubURLInputPrefixes[1]},
+	}
+	for index, entry := range managed {
+		entryIndex := len(entries) + index
+		result[gitConfigKeyEnvPrefix+strconv.Itoa(entryIndex)] = entry.key
+		result[gitConfigValueEnvPrefix+strconv.Itoa(entryIndex)] = entry.value
+	}
+	result[gitConfigCountEnv] = strconv.Itoa(len(entries) + len(managed))
+	return result, nil
+}
+
+func gitURLRewriteBase(key string) (string, bool) {
+	lower := strings.ToLower(key)
+	for _, suffix := range []string{".insteadof", ".pushinsteadof"} {
+		if strings.HasPrefix(lower, "url.") && strings.HasSuffix(lower, suffix) && len(key) > len("url.")+len(suffix) {
+			return key[len("url.") : len(key)-len(suffix)], true
+		}
+	}
+	return "", false
+}
+
+func copiedGitURLRewrites(copies map[string][]byte) ([]gitURLRewrite, error) {
+	if len(copies) == 0 {
+		return nil, nil
+	}
+	temporaryDirectory, err := os.MkdirTemp("", "lja-github-git-")
+	if err != nil {
+		return nil, ljaError("cannot inspect copied Git configuration: %w", err)
+	}
+	defer func() {
+		if removeErr := os.RemoveAll(temporaryDirectory); removeErr != nil {
+			slog.Warn("cannot remove temporary Git configuration directory", "path", temporaryDirectory, "error", removeErr)
+		}
+	}()
+	relatives := make([]string, 0, len(copies))
+	for relative := range copies {
+		relatives = append(relatives, relative)
+	}
+	sort.Strings(relatives)
+	rewrites := make([]gitURLRewrite, 0)
+	for index, relative := range relatives {
+		path := filepath.Join(temporaryDirectory, strconv.Itoa(index)+".gitconfig")
+		if err := os.WriteFile(path, copies[relative], 0o600); err != nil {
+			return nil, ljaError("cannot inspect copied Git configuration %s: %w", relative, err)
+		}
+		entries, err := hostGitConfig(path, "--null", "--list")
+		if err != nil {
+			slog.Debug("skipping copied Git file that is not a Git configuration", "path", relative, "error", err)
+			continue
+		}
+		for _, entry := range bytes.Split(entries, []byte{0}) {
+			if len(entry) == 0 {
+				continue
+			}
+			separator := bytes.IndexByte(entry, '\n')
+			if separator < 0 {
+				return nil, ljaError("cannot inspect copied Git configuration %s: malformed entry", relative)
+			}
+			key := string(entry[:separator])
+			base, present := gitURLRewriteBase(key)
+			if !present {
+				continue
+			}
+			rewrites = append(rewrites, gitURLRewrite{path: relative, key: key, value: string(entry[separator+1:]), base: base})
+		}
+	}
+	return rewrites, nil
+}
+
+func githubGitURLRewriteConflicts(copies map[string][]byte) error {
+	rewrites, err := copiedGitURLRewrites(copies)
+	if err != nil {
+		return err
+	}
+	for _, rewrite := range rewrites {
+		if strings.EqualFold(rewrite.base, githubHTTPSBase) {
+			continue
+		}
+		lowerValue := strings.ToLower(rewrite.value)
+		for _, prefix := range githubURLInputPrefixes {
+			lowerPrefix := strings.ToLower(prefix)
+			if strings.HasPrefix(lowerValue, lowerPrefix) || strings.HasPrefix(lowerPrefix, lowerValue) {
+				return ljaError("copied Git config %s has conflicting GitHub URL rewrite %s=%s; HTTPS authentication cannot be enforced", rewrite.path, rewrite.key, rewrite.value)
+			}
+		}
+	}
+	return nil
+}
 
 type gitReplacement struct {
 	key    string
@@ -320,14 +523,19 @@ func gitConfigWriteScript(relative string) (string, error) {
 	return GitConfigWriteScript(relative)
 }
 
-func prepareGit(project string, vmName string, limactlCommand string, forwarding ...bool) error {
+func prepareGitInternal(project string, vmName string, limactlCommand string, forwardGPG bool, validateGitHub bool) error {
 	home, err := homeDirectory()
 	if err != nil {
 		return ljaError("cannot prepare Git in VM %s: %w", vmName, err)
 	}
-	copies, err := gitConfigCopiesForGPG(home, len(forwarding) > 0 && forwarding[0])
+	copies, err := gitConfigCopiesForGPG(home, forwardGPG)
 	if err != nil {
 		return ljaError("cannot prepare Git in VM %s: %w", vmName, err)
+	}
+	if validateGitHub {
+		if err := githubGitURLRewriteConflicts(copies); err != nil {
+			return ljaError("cannot prepare GitHub integration in VM %s: %w", vmName, err)
+		}
 	}
 	relatives := make([]string, 0, len(copies))
 	for relative := range copies {
@@ -354,4 +562,12 @@ func prepareGit(project string, vmName string, limactlCommand string, forwarding
 		}
 	}
 	return nil
+}
+
+func prepareGit(project string, vmName string, limactlCommand string, forwarding ...bool) error {
+	return prepareGitInternal(project, vmName, limactlCommand, len(forwarding) > 0 && forwarding[0], false)
+}
+
+func prepareGitWithGitHub(project string, vmName string, limactlCommand string, forwarding ...bool) error {
+	return prepareGitInternal(project, vmName, limactlCommand, len(forwarding) > 0 && forwarding[0], true)
 }

@@ -63,10 +63,10 @@ below.
 
 The target behavior is described in
 [Planned: GitHub authentication](DESIGN.md#planned-github-authentication).
-Host configuration, token resolution, guest dependencies, and token delivery
-are implemented. Invocation-scoped Git runtime configuration and the remaining
-validation are still pending; README support claims remain unchanged until the
-feature is complete.
+Host configuration, token resolution, guest dependencies, token delivery, and
+invocation-scoped Git runtime configuration are implemented. Remaining tests,
+live validation, and documentation are still pending; README support claims
+remain unchanged until the feature is complete.
 
 - [x] Add `github.enabled` (default false) and `github.token_command` (default
   empty argument vector) to configuration types, validation, cloning, merging,
@@ -89,7 +89,7 @@ feature is complete.
   `copy_git_config: false`. Forward the selected token as `GH_TOKEN` to setup
   and shell/make/agent commands and their descendants, without adding it to
   package-manager commands or performing unconditional API probes.
-- [ ] Build invocation-scoped runtime Git configuration, preserving valid
+- [x] Build invocation-scoped runtime Git configuration, preserving valid
   existing `GIT_CONFIG_*` entries and rejecting malformed ones. Reset inherited
   GitHub HTTPS helpers and select `gh auth git-credential`. Rewrite
   `git@github.com:` and `ssh://git@github.com/` to HTTPS within the invocation;

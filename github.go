@@ -61,9 +61,9 @@ func (workflow *githubWorkflow) environment(environment map[string]string) (map[
 			return nil, context.Cause(workflow.ctx)
 		}
 	}
-	result := make(map[string]string, len(environment)+1)
-	for name, value := range environment {
-		result[name] = value
+	result, err := githubGitEnvironment(environment)
+	if err != nil {
+		return nil, err
 	}
 	result[githubTokenEnvironment] = workflow.token
 	return result, nil

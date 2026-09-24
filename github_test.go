@@ -195,6 +195,11 @@ func TestGitHubPreparationInstallsDependenciesAndForwardsToken(t *testing.T) {
 		Setup:         []SetupCommand{{Command: testSetupCommand}},
 	}
 	options.Development = &config
+	options.Environment = map[string]string{
+		gitConfigCountEnv:             "1",
+		gitConfigKeyEnvPrefix + "0":   "user.name",
+		gitConfigValueEnvPrefix + "0": "Example",
+	}
 	options.github = &githubWorkflow{ctx: context.Background(), token: "test-token"}
 
 	_, err := OpenShell(project, []string{"printf", "shell"}, project, options)
@@ -222,6 +227,8 @@ func TestGitHubPreparationInstallsDependenciesAndForwardsToken(t *testing.T) {
 		if len(operation) > 0 && operation[len(operation)-1] == testSetupCommand {
 			setupIndex = index
 			assert.Assert(t, operationHasEnvironment(operation, githubTokenEnvironment, "test-token"))
+			assert.Assert(t, operationHasEnvironment(operation, gitConfigCountEnv, "5"))
+			assert.Assert(t, operationHasEnvironment(operation, gitConfigKeyEnvPrefix+"0", "user.name"))
 		}
 	}
 	assert.Assert(t, packageIndex >= 0)
@@ -230,6 +237,7 @@ func TestGitHubPreparationInstallsDependenciesAndForwardsToken(t *testing.T) {
 	assert.Assert(t, verifiedGit)
 	assert.Assert(t, verifiedGH)
 	assert.Assert(t, operationHasEnvironment(database.Operations[len(database.Operations)-1], githubTokenEnvironment, "test-token"))
+	assert.Assert(t, operationHasEnvironment(database.Operations[len(database.Operations)-1], gitConfigCountEnv, "5"))
 }
 
 func TestGitHubAgentCommandForwardsToken(t *testing.T) {

@@ -326,7 +326,11 @@ func prepareDevelopment(project string, vmName string, config *DevelopmentConfig
 		return err
 	}
 	if actualConfig.CopyGitConfig {
-		if err := prepareGit(project, vmName, limactlCommand, actualConfig.GPGForwarding); err != nil {
+		prepareGitFunction := prepareGit
+		if actualConfig.GitHub.Enabled {
+			prepareGitFunction = prepareGitWithGitHub
+		}
+		if err := prepareGitFunction(project, vmName, limactlCommand, actualConfig.GPGForwarding); err != nil {
 			return err
 		}
 	}
