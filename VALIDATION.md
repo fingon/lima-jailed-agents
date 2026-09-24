@@ -87,3 +87,15 @@ candidate, closed its GPG session before stopping and renaming VMs, and ran the
 selected command with a distinct fresh final-VM home. A deliberate setup
 failure removed the candidate without replacing the managed VM; the original
 VM remained running and accepted a subsequent GPG shell.
+
+Finally, forwarding was disabled for a subsequent invocation. With host
+`gpg` and `gpgconf` hidden from `PATH`, shell, existing-VM no-op create,
+`config`, `status`, and `stop` all succeeded; no disposable host
+`gpg-agent` process was running.
+
+Passphrase pinentry remains an open validation item. Direct host terminal
+pinentry worked for a disposable protected key, while the forwarded terminal
+attempt was canceled through GnuPG's restricted extra socket. The GUI
+`pinentry-mac` path reached a waiting prompt, but this sandbox denied GUI
+inspection and control, so that attempt was canceled without recording a
+success claim.

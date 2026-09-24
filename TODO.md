@@ -188,9 +188,10 @@ DESIGN.md.
 
 ## GPG real-Lima validation
 
-The implementation and isolated tests are complete; the remaining validation
-requires a session with access to Lima's host state. The current nono sandbox
-does not grant access to `~/.lima`.
+The implementation and noninteractive real-Lima validation are complete; the
+remaining pinentry validation requires interactive host GUI and terminal
+access. The current nono sandbox does not grant GUI control or access to the
+default `~/.lima` state, so validation runs use a temporary `LIMA_HOME`.
 
 - [x] In a disposable Lima VM and disposable host `GNUPGHOME`, enable
   `gpg_forwarding`. Run `lja shell -- gpg --list-keys`, create a detached
@@ -207,6 +208,6 @@ does not grant access to `~/.lima`.
 - [x] Recreate with forwarding enabled. Verify candidate forwarding closes
   before stop/rename, setup runs once, and the selected command uses a fresh
   final-VM session. Exercise setup failure and restoration paths.
-- [ ] Disable forwarding for the next invocation and verify no host GPG process
+- [x] Disable forwarding for the next invocation and verify no host GPG process
   or forwarding is started. Confirm existing-VM no-op create and read-only
   lifecycle commands work without host GPG installed.
