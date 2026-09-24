@@ -75,3 +75,9 @@ sockets were distinct, and the second session successfully listed keys after
 the first session exited. A real Codex subprocess launched with forwarding
 active. A background guest job started during a session did not retain usable
 forwarding after LJA exited.
+
+Interrupt cleanup was validated with active GPG connections. SIGINT removed the
+guest temporary home and made its forwarded socket unavailable. After SIGKILL,
+a raw Lima probe reported no running guest agent for the killed session; the
+host had no matching GPG-forwarding SSH tunnel or `lja-gpg-*` proxy directory
+left behind.

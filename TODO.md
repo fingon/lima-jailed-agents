@@ -201,7 +201,7 @@ does not grant access to `~/.lima`.
 - [x] Run simultaneous LJA shells; exiting one must leave the other usable.
   Confirm setup and the selected command share the temporary home. Verify
   nested agents inherit it, and background jobs lose access after LJA exits.
-- [ ] Interrupt and SIGKILL LJA with an active GPG connection. Confirm the host
+- [x] Interrupt and SIGKILL LJA with an active GPG connection. Confirm the host
   agent is unreachable through any surviving guest socket, then remove any
   orphan SSH processes and inert temporary directories from the killed run.
 - [ ] Recreate with forwarding enabled. Verify candidate forwarding closes
