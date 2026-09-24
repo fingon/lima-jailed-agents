@@ -105,7 +105,7 @@ func TestUnsafeHomeRejectedBeforePreparation(t *testing.T) {
 			assert.ErrorContains(t, err, "home directory")
 			_, err = PrepareAgents(project, codexAgentName, nil, nil, WorkflowOptions{})
 			assert.ErrorContains(t, err, "home directory")
-			_, err = prepareNamedVMLocked(project, "unused", "", nil, nil, nil, "", filepath.Join(home, "missing-limactl"), "", false)
+			_, err = prepareNamedVMLocked(project, "unused", "", nil, nil, nil, "", filepath.Join(home, "missing-limactl"), "", false, nil, nil)
 			assert.ErrorContains(t, err, "home directory")
 			_, err = os.Stat(filepath.Join(home, "locks"))
 			assert.ErrorIs(t, err, os.ErrNotExist)

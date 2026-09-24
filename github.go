@@ -16,6 +16,8 @@ import (
 
 const githubTokenTimeout = 30 * time.Second
 
+const ghCommand = "gh"
+
 type githubWorkflow struct {
 	ctx      context.Context
 	cancel   context.CancelCauseFunc
@@ -50,13 +52,33 @@ func (workflow *githubWorkflow) context() context.Context {
 	return workflow.ctx
 }
 
+func (workflow *githubWorkflow) environment(environment map[string]string) (map[string]string, error) {
+	if workflow == nil {
+		return environment, nil
+	}
+	if workflow.ctx != nil {
+		if err := workflow.ctx.Err(); err != nil {
+			return nil, context.Cause(workflow.ctx)
+		}
+	}
+	result := make(map[string]string, len(environment)+1)
+	for name, value := range environment {
+		result[name] = value
+	}
+	result[githubTokenEnvironment] = workflow.token
+	return result, nil
+}
+
 func (options *WorkflowOptions) ownGitHubWorkflow() (func(*error), error) {
 	config := developmentConfigOrDefault(options.Development)
-	if !config.GitHub.Enabled || options.github != nil {
+	if !config.GitHub.Enabled {
 		return func(*error) {}, nil
 	}
-	if err := config.validateGitHubEnvironment(); err != nil {
+	if err := config.validateGitHubEnvironment(options.Environment); err != nil {
 		return nil, err
+	}
+	if options.github != nil {
+		return func(*error) {}, nil
 	}
 	signalContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	ctx, cancel := context.WithCancelCause(signalContext)

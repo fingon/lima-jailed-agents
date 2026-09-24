@@ -123,7 +123,7 @@ func (options WorkflowOptions) prepareVMLocked(project, vmName string) (LimaInst
 			return options.replaceVMLocked(project, *old)
 		}
 	}
-	return prepareNamedVMLocked(project, vmName, options.StateRoot, options.Development, options.Environment, options.agentTrustDirectories, options.LockDirectory, options.limaCommand(), options.agentUpdateName, true, options.gpg)
+	return prepareNamedVMLocked(project, vmName, options.StateRoot, options.Development, options.Environment, options.agentTrustDirectories, options.LockDirectory, options.limaCommand(), options.agentUpdateName, true, options.gpg, options.github)
 }
 
 type vmReplacement struct {
@@ -170,7 +170,7 @@ func (options WorkflowOptions) replaceVMLocked(project string, old LimaInstance)
 			}
 		}
 	}()
-	if _, err := prepareNamedVMLocked(project, replacement.candidate, options.StateRoot, options.Development, options.Environment, options.agentTrustDirectories, options.LockDirectory, options.limaCommand(), options.agentUpdateName, false, options.gpg); err != nil {
+	if _, err := prepareNamedVMLocked(project, replacement.candidate, options.StateRoot, options.Development, options.Environment, options.agentTrustDirectories, options.LockDirectory, options.limaCommand(), options.agentUpdateName, false, options.gpg, options.github); err != nil {
 		return LimaInstance{}, err
 	}
 	if err := options.gpg.closeSession(); err != nil {

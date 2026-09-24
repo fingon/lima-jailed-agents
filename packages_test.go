@@ -127,6 +127,26 @@ func TestPackageQueryMissingClassification(t *testing.T) {
 	}
 }
 
+func TestGitHubDevelopmentDependencies(t *testing.T) {
+	for _, test := range []struct {
+		name            string
+		copyGitConfig   bool
+		wantDevelopment []string
+	}{
+		{name: "without Git copying", wantDevelopment: []string{"git", ghCommand}},
+		{name: "with Git copying", copyGitConfig: true, wantDevelopment: []string{"git", ghCommand}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			backend, err := packageBackendForOSRelease(guestOSRelease{ID: "ubuntu"})
+			assert.NilError(t, err)
+			assert.DeepEqual(t, backend.developmentPackageNames(DevelopmentConfig{
+				GitHub:        GitHubConfig{Enabled: true},
+				CopyGitConfig: test.copyGitConfig,
+			}), test.wantDevelopment)
+		})
+	}
+}
+
 func TestPackageNameValidation(t *testing.T) {
 	assert.NilError(t, ValidateDevelopmentConfig([]byte("packages: [NodeJS_22-devel, libssl3:amd64]"), true))
 	for _, test := range []struct {

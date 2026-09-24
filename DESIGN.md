@@ -318,7 +318,8 @@ from host home with a 30-second timeout. Tokens are validated as one line
 without control characters, retained only in the invocation, and reused during
 recreation. Configuration inspection, lifecycle-only commands, and an existing
 VM no-op create do not resolve credentials. Guest token delivery and Git
-integration remain described in the planned GitHub section below.
+delivery is described in the guest preparation section below. Invocation-scoped
+Git runtime configuration remains planned.
 
 Caller environment values are read only when an operation needs to prepare a
 VM. A passthrough name must exist, while an explicit `env` value takes
@@ -571,10 +572,12 @@ complete a partial transfer. The host configuration is never modified.
 
 ## Planned: GitHub authentication
 
-This section describes managed guest integration behavior that is not yet
-implemented. The configuration shape and host token resolution are current; the
-tasks in [TODO.md](TODO.md#github-authentication) cover implementation. Existing manual
-environment passthrough, package configuration, and setup remain available.
+This section records the remaining managed GitHub integration behavior. The
+configuration shape, host token resolution, guest dependencies, and token
+delivery are current; invocation-scoped Git configuration remains planned. The
+tasks in [TODO.md](TODO.md#github-authentication) cover the remaining work.
+Existing manual environment passthrough, package configuration, and setup remain
+available.
 Managed support initially targets `github.com`; Enterprise hosts, SSH-agent
 forwarding, token minting, and automatic renewal are outside this feature.
 
@@ -631,21 +634,23 @@ automatic refresh during an invocation.
 
 ### Guest dependencies and Git integration
 
-Enabled support will automatically require `git` and `gh`, including when
-`packages` is empty, through the planned native package backends. Ubuntu and
-Fedora provide native `gh` packages; Node and npm are not dependencies of this
-integration. See the [Ubuntu package](https://packages.ubuntu.com/noble/gh) and
-[Fedora package](https://packages.fedoraproject.org/pkgs/gh/gh/).
+Enabled support automatically requires `git` and `gh`, including when
+`packages` is empty, through the native Ubuntu/Debian and Fedora package
+backends. Both distributions provide native `gh` packages; Node and npm are
+not dependencies of this integration. LJA verifies both guest commands before
+setup. This also applies when `copy_git_config: false`; Git configuration
+copying remains independently controlled. See the [Ubuntu package](https://packages.ubuntu.com/noble/gh)
+and [Fedora package](https://packages.fedoraproject.org/pkgs/gh/gh/).
 
-Prepare invocation-scoped authentication after ordinary Git configuration
-copying and before project setup. This also works with `copy_git_config: false`.
-Supply the selected token as `GH_TOKEN` to setup, shell/make, and agent commands;
-their subprocesses, including nested agents, inherit it. Package-manager
-commands do not need the token. Do not run an unconditional GitHub API probe
-during preparation: actual GitHub operations report expired credentials,
-insufficient permissions, and network failures.
+LJA prepares token delivery after ordinary Git configuration copying and before
+project setup. This also works with `copy_git_config: false`. The selected token
+is supplied as `GH_TOKEN` to setup, shell/make, and agent commands; their
+subprocesses, including nested agents, inherit it. Package-manager and agent
+installation commands do not receive the token. LJA does not run an
+unconditional GitHub API probe during preparation: actual GitHub operations
+report expired credentials, insufficient permissions, and network failures.
 
-Use Git's `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_<n>`, and
+The remaining planned Git integration will use Git's `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_<n>`, and
 `GIT_CONFIG_VALUE_<n>` environment entries for temporary runtime settings.
 Preserve valid existing runtime entries and append managed entries; reject
 malformed existing entries instead of discarding them. For

@@ -373,18 +373,21 @@ func TestPreparationBatchesGuestPackages(t *testing.T) {
 		name          string
 		packages      []string
 		copyGitConfig bool
+		github        bool
 		wantScript    string
 	}{
 		{name: "configured packages", packages: []string{"make", "ninja-build"}, wantScript: "sudo apt-get update && sudo apt-get install -y 'make' 'ninja-build'"},
 		{name: "implicit Git", packages: []string{"make"}, copyGitConfig: true, wantScript: "sudo apt-get update && sudo apt-get install -y 'make' 'git'"},
 		{name: "configured Git is not duplicated", packages: []string{"git", "make"}, copyGitConfig: true, wantScript: "sudo apt-get update && sudo apt-get install -y 'git' 'make'"},
+		{name: "GitHub dependencies without configured packages", github: true, wantScript: "sudo apt-get update && sudo apt-get install -y 'git' 'gh'"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			project, vmName, options := vmFixture(t, "")
 			root := filepath.Dir(project)
 			t.Setenv("HOME", root)
 			config := DevelopmentConfig{Packages: test.packages, CopyGitConfig: test.copyGitConfig}
-			err := prepareDevelopment(project, vmName, &config, nil, options.LimaCommand)
+			config.GitHub.Enabled = test.github
+			err := prepareDevelopment(project, vmName, &config, nil, options.LimaCommand, nil, nil)
 			assert.NilError(t, err)
 
 			database, err := readVMDatabase()
@@ -408,7 +411,7 @@ func TestPreparationKeepsPackageInstallationBeforeSetup(t *testing.T) {
 		Packages: []string{"make"},
 		Setup:    []SetupCommand{{Command: testSetupCommand}},
 	}
-	assert.NilError(t, prepareDevelopment(project, vmName, &config, nil, options.LimaCommand))
+	assert.NilError(t, prepareDevelopment(project, vmName, &config, nil, options.LimaCommand, nil, nil))
 
 	database, err := readVMDatabase()
 	assert.NilError(t, err)
@@ -445,7 +448,7 @@ func TestPreparationSkipsReadyAndEmptyGuestPackages(t *testing.T) {
 			database.PackageInstallationDone = test.packageInstallDone
 			assert.NilError(t, database.save())
 			config := DevelopmentConfig{Packages: test.packages}
-			err = prepareDevelopment(project, vmName, &config, nil, options.LimaCommand)
+			err = prepareDevelopment(project, vmName, &config, nil, options.LimaCommand, nil, nil)
 			assert.NilError(t, err)
 
 			database, err = readVMDatabase()
@@ -484,7 +487,7 @@ func TestPreparationReportsBatchPackageFailures(t *testing.T) {
 				t.Setenv(vmPackageInstallNoopEnv, "1")
 			}
 			config := DevelopmentConfig{Packages: []string{"make", "ninja-build"}}
-			err := prepareDevelopment(project, vmName, &config, nil, options.LimaCommand)
+			err := prepareDevelopment(project, vmName, &config, nil, options.LimaCommand, nil, nil)
 			assert.ErrorContains(t, err, test.want)
 		})
 	}

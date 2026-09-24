@@ -591,14 +591,18 @@ func applyDevelopmentConfig(config DevelopmentConfig, source sourceDevelopmentCo
 	return config
 }
 
-func (config DevelopmentConfig) validateGitHubEnvironment() error {
+func (config DevelopmentConfig) validateGitHubEnvironment(environment map[string]string) error {
 	if !config.GitHub.Enabled {
 		return nil
 	}
-	for _, name := range []string{githubTokenEnvironment, githubFallbackTokenEnvironment} {
-		if _, present := config.Env[name]; present {
-			return ljaError("%s cannot be configured in env when github.enabled is true", name)
+	for _, values := range []map[string]string{config.Env, environment} {
+		for _, name := range []string{githubTokenEnvironment, githubFallbackTokenEnvironment} {
+			if _, present := values[name]; present {
+				return ljaError("%s cannot be configured in env when github.enabled is true", name)
+			}
 		}
+	}
+	for _, name := range []string{githubTokenEnvironment, githubFallbackTokenEnvironment} {
 		for _, passthroughName := range config.EnvPassthrough {
 			if passthroughName == name {
 				return ljaError("%s cannot be passed through when github.enabled is true", name)
@@ -612,7 +616,7 @@ func (config DevelopmentConfig) validateEnvironmentConfiguration() error {
 	if err := config.validateGPGEnvironment(nil); err != nil {
 		return err
 	}
-	return config.validateGitHubEnvironment()
+	return config.validateGitHubEnvironment(nil)
 }
 
 func LoadDevelopmentConfig(project string) (DevelopmentConfig, error) {

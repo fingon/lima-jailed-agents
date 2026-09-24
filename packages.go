@@ -32,6 +32,7 @@ type guestPackageBackend struct {
 	installCommand string
 	requiredTools  []string
 	gitPackage     string
+	ghPackage      string
 	gpgPackage     string
 	nodePackages   []string
 }
@@ -101,6 +102,7 @@ func packageBackendForOSRelease(osRelease guestOSRelease) (guestPackageBackend, 
 			installCommand: aptGetCommand,
 			requiredTools:  []string{dpkgQueryCommand, aptGetCommand, sudoCommand},
 			gitPackage:     gitCommand,
+			ghPackage:      ghCommand,
 			gpgPackage:     gpgPackage,
 			nodePackages:   []string{"nodejs", npmCommand},
 		}, nil
@@ -111,6 +113,7 @@ func packageBackendForOSRelease(osRelease guestOSRelease) (guestPackageBackend, 
 			installCommand: dnfCommand,
 			requiredTools:  []string{rpmCommand, dnfCommand, sudoCommand},
 			gitPackage:     gitCommand,
+			ghPackage:      ghCommand,
 			gpgPackage:     "gnupg2",
 			nodePackages:   []string{"nodejs", npmCommand},
 		}, nil
@@ -279,6 +282,9 @@ func (backend guestPackageBackend) developmentPackageNames(config DevelopmentCon
 	if config.CopyGitConfig {
 		packages = append(packages, backend.gitPackage)
 	}
+	if config.GitHub.Enabled {
+		packages = append(packages, backend.gitPackage, backend.ghPackage)
+	}
 	return uniqueStrings(packages)
 }
 
@@ -318,7 +324,7 @@ func ensureGuestPackagesWithBackend(project string, vmName string, packageNames 
 }
 
 func ensureDevelopmentPackages(project string, vmName string, config DevelopmentConfig, limactlCommand string) (guestPackageBackend, error) {
-	if len(config.Packages) == 0 && !config.GPGForwarding && !config.CopyGitConfig {
+	if len(config.Packages) == 0 && !config.GPGForwarding && !config.CopyGitConfig && !config.GitHub.Enabled {
 		return guestPackageBackend{}, nil
 	}
 	backend, err := packageBackendForGuest(project, vmName, limactlCommand)
@@ -333,13 +339,17 @@ func ensureDevelopmentPackages(project string, vmName string, config Development
 }
 
 func verifyDevelopmentExecutables(project string, vmName string, config DevelopmentConfig, backend guestPackageBackend, limactlCommand string) error {
-	executables := make([]string, 0, 3)
+	executables := make([]string, 0, 5)
 	if config.CopyGitConfig {
 		executables = append(executables, gitCommand)
+	}
+	if config.GitHub.Enabled {
+		executables = append(executables, gitCommand, ghCommand)
 	}
 	if config.GPGForwarding {
 		executables = append(executables, gpgCommand, gpgConfCommand)
 	}
+	executables = uniqueStrings(executables)
 	for _, executable := range executables {
 		available, err := guestExecutableAvailable(project, vmName, executable, limactlCommand)
 		if err != nil {

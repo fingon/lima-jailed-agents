@@ -175,3 +175,77 @@ func TestGitHubTokenResolutionSkipsExistingNoopCreate(t *testing.T) {
 	_, statErr := os.Stat(marker)
 	assert.Assert(t, os.IsNotExist(statErr))
 }
+
+func operationHasEnvironment(operation []string, name string, value string) bool {
+	want := name + "=" + value
+	for _, argument := range operation {
+		if argument == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestGitHubPreparationInstallsDependenciesAndForwardsToken(t *testing.T) {
+	project, _, options := vmFixture(t, limaStatusRunning)
+	config := DevelopmentConfig{
+		GitHub:        GitHubConfig{Enabled: true},
+		Packages:      []string{},
+		CopyGitConfig: false,
+		Setup:         []SetupCommand{{Command: testSetupCommand}},
+	}
+	options.Development = &config
+	options.github = &githubWorkflow{ctx: context.Background(), token: "test-token"}
+
+	_, err := OpenShell(project, []string{"printf", "shell"}, project, options)
+	assert.NilError(t, err)
+	database, err := readVMDatabase()
+	assert.NilError(t, err)
+	packageIndex := -1
+	setupIndex := -1
+	verifiedGit := false
+	verifiedGH := false
+	for index, operation := range database.Operations {
+		if len(operation) < 5 {
+			continue
+		}
+		guestArguments := unwrapGuestPathArguments(operation[4:])
+		if len(guestArguments) == 3 && guestArguments[0] == guestCommandProbe && guestArguments[1] == guestCommandProbeFlag {
+			verifiedGit = verifiedGit || guestArguments[2] == gitCommand
+			verifiedGH = verifiedGH || guestArguments[2] == ghCommand
+		}
+		if len(operation) >= 5 && isPackageInstallationCommand(operation[4:]) {
+			packageIndex = index
+			assert.Assert(t, !operationHasEnvironment(operation, githubTokenEnvironment, "test-token"))
+			assert.Assert(t, strings.Contains(guestArguments[3], "'git' 'gh'"))
+		}
+		if len(operation) > 0 && operation[len(operation)-1] == testSetupCommand {
+			setupIndex = index
+			assert.Assert(t, operationHasEnvironment(operation, githubTokenEnvironment, "test-token"))
+		}
+	}
+	assert.Assert(t, packageIndex >= 0)
+	assert.Assert(t, setupIndex >= 0)
+	assert.Assert(t, packageIndex < setupIndex)
+	assert.Assert(t, verifiedGit)
+	assert.Assert(t, verifiedGH)
+	assert.Assert(t, operationHasEnvironment(database.Operations[len(database.Operations)-1], githubTokenEnvironment, "test-token"))
+}
+
+func TestGitHubAgentCommandForwardsToken(t *testing.T) {
+	project, _, options := vmFixture(t, limaStatusRunning)
+	config := DevelopmentConfig{
+		GitHub:        GitHubConfig{Enabled: true},
+		Packages:      []string{},
+		CopyGitConfig: false,
+	}
+	options.Development = &config
+	options.github = &githubWorkflow{ctx: context.Background(), token: "agent-token"}
+
+	_, err := RunAgent(project, codexAgentName, []string{"--version"}, nil, project, options)
+	assert.NilError(t, err)
+	database, err := readVMDatabase()
+	assert.NilError(t, err)
+	lastOperation := database.Operations[len(database.Operations)-1]
+	assert.Assert(t, operationHasEnvironment(lastOperation, githubTokenEnvironment, "agent-token"))
+}

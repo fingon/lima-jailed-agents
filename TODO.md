@@ -63,9 +63,10 @@ below.
 
 The target behavior is described in
 [Planned: GitHub authentication](DESIGN.md#planned-github-authentication).
-Guest integration for this feature is not implemented. Native dependency
-installation builds on the Fedora/native-package work above; README support
-claims remain unchanged until the feature is complete.
+Host configuration, token resolution, guest dependencies, and token delivery
+are implemented. Invocation-scoped Git runtime configuration and the remaining
+validation are still pending; README support claims remain unchanged until the
+feature is complete.
 
 - [x] Add `github.enabled` (default false) and `github.token_command` (default
   empty argument vector) to configuration types, validation, cloning, merging,
@@ -82,7 +83,7 @@ claims remain unchanged until the feature is complete.
   and command failures without exposing captured output or command arguments.
   Resolve once per invocation, reuse through recreation, and do not cache
   credentials across invocations or automatically read host credential stores.
-- [ ] Add `git` and `gh` as automatic dependencies through native package
+- [x] Add `git` and `gh` as automatic dependencies through native package
   backends even with `packages: []`. Verify guest commands are available.
   Prepare GitHub integration after Git copying and before setup, including
   `copy_git_config: false`. Forward the selected token as `GH_TOKEN` to setup

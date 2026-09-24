@@ -153,7 +153,7 @@ func effectiveAgentNames(selectedAgent string, withAgents []string, config *Deve
 }
 
 func effectiveDevelopmentPackages(config DevelopmentConfig) []string {
-	return (guestPackageBackend{gitPackage: gitCommand, gpgPackage: gpgPackage}).developmentPackageNames(config)
+	return (guestPackageBackend{gitPackage: gitCommand, ghPackage: ghCommand, gpgPackage: gpgPackage}).developmentPackageNames(config)
 }
 
 func guestExecutableVersion(project string, vmName string, executable string, limactlCommand string, contexts ...context.Context) (string, string, error) {
@@ -298,12 +298,17 @@ func installAgentLocked(project string, vmName string, agent AgentSpec, update b
 	return executablePath, nil
 }
 
-func prepareDevelopment(project string, vmName string, config *DevelopmentConfig, environment map[string]string, limactlCommand string, workflows ...*gpgWorkflow) (returnErr error) {
-	actualConfig := developmentConfigOrDefault(config)
-	var workflow *gpgWorkflow
-	if len(workflows) > 0 {
-		workflow = workflows[0]
+func workflowProcessOptions(limactlCommand string, gpg *gpgWorkflow, github *githubWorkflow) processOptions {
+	options := gpg.processOptions(limactlCommand)
+	if options.context == nil && github != nil {
+		options.context = github.context()
 	}
+	return options
+}
+
+func prepareDevelopment(project string, vmName string, config *DevelopmentConfig, environment map[string]string, limactlCommand string, gpg *gpgWorkflow, github *githubWorkflow) (returnErr error) {
+	actualConfig := developmentConfigOrDefault(config)
+	workflow := gpg
 	if actualConfig.GPGForwarding && workflow == nil {
 		options := WorkflowOptions{Development: &actualConfig, Environment: environment}
 		cleanup, err := options.ownGPGWorkflow()
@@ -329,9 +334,13 @@ func prepareDevelopment(project string, vmName string, config *DevelopmentConfig
 	if err != nil {
 		return err
 	}
+	environment, err = github.environment(environment)
+	if err != nil {
+		return err
+	}
 	for _, setup := range actualConfig.Setup {
 		slog.Info("running setup", "source", setup.Source, "command_index", setup.Index, "vm", vmName)
-		options := workflow.processOptions(limactlCommand)
+		options := workflowProcessOptions(limactlCommand, workflow, github)
 		if _, err := runGuest(project, vmName, []string{shellCommand, "-eu", shellCommandFlag, setup.Command}, options, environment); err != nil {
 			return ljaError("setup %s command %d failed: %w", setup.Source, setup.Index, err)
 		}
@@ -838,7 +847,11 @@ func RunAgent(project string, agentName string, arguments []string, withAgents [
 	if err != nil {
 		return 0, err
 	}
-	optionsForGuest := options.gpg.processOptions(options.limaCommand())
+	environment, err = options.github.environment(environment)
+	if err != nil {
+		return 0, err
+	}
+	optionsForGuest := workflowProcessOptions(options.limaCommand(), options.gpg, options.github)
 	optionsForGuest.check = false
 	result, err := runGuest(workingDirectory, instance.Name, guestArguments, optionsForGuest, environment)
 	if err != nil {
@@ -907,6 +920,10 @@ func OpenShell(project string, arguments []string, workingDirectory string, opti
 	if err != nil {
 		return 0, err
 	}
+	environment, err = options.github.environment(environment)
+	if err != nil {
+		return 0, err
+	}
 	environmentArguments, err := sortedEnvironmentArguments(environment)
 	if err != nil {
 		return 0, err
@@ -923,7 +940,7 @@ func OpenShell(project string, arguments []string, workingDirectory string, opti
 	limaArguments := []string{"shell", limaWorkdirFlag, workingDirectory, instance.Name}
 	limaArguments = append(limaArguments, environmentArguments...)
 	limaArguments = append(limaArguments, forwarded...)
-	runOptions := options.gpg.processOptions(options.limaCommand())
+	runOptions := workflowProcessOptions(options.limaCommand(), options.gpg, options.github)
 	runOptions.check = false
 	result, err := runLima(limaArguments, runOptions)
 	if err != nil {
