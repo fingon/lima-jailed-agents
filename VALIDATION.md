@@ -31,3 +31,28 @@ disposable project configurations therefore selected `mountType:
 reverse-sshfs`. This is a validation-environment workaround, not a project
 default. All disposable instances and temporary project/state directories
 were removed after validation.
+
+## GitHub authentication
+
+GitHub validation was run on 2026-09-24 with the same Lima 2.2.0 VZ setup.
+Ubuntu 26.04 installed `gh` 2.46.0 and Fedora 44 installed `gh` 2.97.0
+through their native package backends. A temporary private repository was
+used for the checks; its pull request, branch, and contents were removed
+afterward. The repository itself could not be deleted because the validation
+token did not have the `delete_repo` scope.
+
+Both guests passed setup with a host `gh auth token` command, received
+`GH_TOKEN`, and successfully ran a GitHub API query from a setup subprocess.
+Ubuntu fetched and pushed through a `git@github.com:` remote, then created a
+pull request with `gh`; Fedora fetched through an
+`ssh://git@github.com/` remote. Both remotes were observed as HTTPS inside
+the invocation. A real Codex subprocess launched successfully in each guest
+and reported Codex CLI 0.156.1. Two concurrent Ubuntu shell invocations both
+completed API, token-inheritance, and URL-rewrite checks.
+
+Disabling GitHub support on the Fedora project left both `GH_TOKEN` and
+`GITHUB_TOKEN` unset. A deliberately invalid token produced an HTTP 401
+`Bad credentials` failure without exposing the token. The authenticated token
+also produced GitHub's explicit `admin:public_key` scope guidance when used
+against an endpoint outside its permissions. No token values were included
+in captured or recorded validation output.

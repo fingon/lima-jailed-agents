@@ -64,9 +64,9 @@ below.
 The target behavior is described in
 [Planned: GitHub authentication](DESIGN.md#planned-github-authentication).
 Host configuration, token resolution, guest dependencies, token delivery, and
-invocation-scoped Git runtime configuration are implemented. Remaining tests,
-live validation, and documentation are still pending; README support claims
-remain unchanged until the feature is complete.
+invocation-scoped Git runtime configuration are implemented. Live
+disposable-VM validation is recorded below; README support claims remain
+unchanged until the documentation item is complete.
 
 - [x] Add `github.enabled` (default false) and `github.token_command` (default
   empty argument vector) to configuration types, validation, cloning, merging,
@@ -110,7 +110,7 @@ remain unchanged until the feature is complete.
   credential helpers/URL rewrites and pre-existing runtime Git settings.
   Assert no persistent login, credential files, token-bearing wrappers, shared
   remote edits, or changes to unrelated Git hosts.
-- [ ] Validate disposable Ubuntu and Fedora VMs with a dedicated repository
+- [x] Validate disposable Ubuntu and Fedora VMs with a dedicated repository
   and token. Exercise private fetch/push, GitHub API and PR operations, setup
   and agent subprocesses, SSH-to-HTTPS rewriting, disabled support, and
   concurrent sessions. Verify insufficient permissions and expired tokens
