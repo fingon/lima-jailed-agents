@@ -198,7 +198,7 @@ does not grant access to `~/.lima`.
   decrypt in the guest. Confirm no private-key files were copied.
 - [ ] Exercise host GUI pinentry with a passphrase-protected key, including
   cancellation and retry, and test the supported host terminal-pinentry setup.
-- [ ] Run simultaneous LJA shells; exiting one must leave the other usable.
+- [x] Run simultaneous LJA shells; exiting one must leave the other usable.
   Confirm setup and the selected command share the temporary home. Verify
   nested agents inherit it, and background jobs lose access after LJA exits.
 - [ ] Interrupt and SIGKILL LJA with an active GPG connection. Confirm the host

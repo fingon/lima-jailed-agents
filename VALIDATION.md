@@ -68,3 +68,10 @@ The guest listed the forwarded public key, created a detached signature that
 the host verified, and decrypted ciphertext created by the host. The guest
 session had no `private-keys-v1.d` directory before or after decryption, and
 the disposable host keyring was destroyed after the run.
+
+Concurrent GPG sessions were also run in the same Ubuntu VM. Each session's
+setup marker was visible to its selected command, the temporary homes and
+sockets were distinct, and the second session successfully listed keys after
+the first session exited. A real Codex subprocess launched with forwarding
+active. A background guest job started during a session did not retain usable
+forwarding after LJA exited.
