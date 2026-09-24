@@ -46,12 +46,13 @@ below.
   executables, incompatible engines, agent reuse and update, and absence of
   Snap commands. Ensure shell/make without agents do not install Node unless
   requested through `packages`.
-- [ ] Validate disposable Ubuntu and Fedora VMs: create, shell/make, configured
+- [x] Validate disposable Ubuntu and Fedora VMs: create, shell/make, configured
   dependencies, each built-in agent's installation/update, GPG forwarding,
   repeat preparation, and recreation. Check `node` and `npm` are runnable,
   including Fedora's unversioned executable providers. Record tested Lima and
-  guest versions. Live validation requires access to Lima's host state;
-  the planning session could not access `~/.lima` through its nono sandbox.
+  guest versions in [VALIDATION.md](VALIDATION.md). Live validation used a
+  temporary Lima state directory because the planning session could not access
+  `~/.lima` through its nono sandbox.
 - [x] At implementation time, update README examples and support claims and
   promote the planned DESIGN.md section to current behavior, replacing the
   superseded creation and provisioning descriptions. Enable the prek hook,
