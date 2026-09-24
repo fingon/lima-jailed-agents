@@ -344,6 +344,7 @@ func TestDevelopmentConfigurationFixtures(t *testing.T) {
 		projectFixture    string
 		expectedFixture   string
 		wantGitHubCommand []string
+		wantGitHubEnabled bool
 		wantPackages      []string
 		wantAgents        []string
 		wantCopyGitConfig bool
@@ -409,6 +410,21 @@ func TestDevelopmentConfigurationFixtures(t *testing.T) {
 			wantSetupIndices: []int{1, 1},
 		},
 		{
+			name:              "project enables inherited GitHub command",
+			globalFixture:     "github-enabled/global.yaml",
+			projectFixture:    "github-enabled/project.yaml",
+			expectedFixture:   "github-enabled/expected.yaml",
+			wantGitHubCommand: []string{"gh", "auth", "token"},
+			wantGitHubEnabled: true,
+			wantPackages:      []string{gitCommand, makeCommand},
+			wantAgents:        []string{},
+			wantCopyGitConfig: true,
+			wantEnvironment:   map[string]string{},
+			wantPassthrough:   []string{},
+			wantSetup:         []string{},
+			wantSetupIndices:  []int{},
+		},
+		{
 			name:              "inheritance switches",
 			globalFixture:     "inherit-disabled/global.yaml",
 			projectFixture:    "inherit-disabled/project.yaml",
@@ -442,7 +458,7 @@ func TestDevelopmentConfigurationFixtures(t *testing.T) {
 			assert.NilError(t, err)
 			assert.DeepEqual(t, config.Packages, test.wantPackages)
 			assert.DeepEqual(t, config.Agents, test.wantAgents)
-			assert.Equal(t, config.GitHub.Enabled, false)
+			assert.Equal(t, config.GitHub.Enabled, test.wantGitHubEnabled)
 			assert.DeepEqual(t, config.GitHub.TokenCommand, append([]string{}, test.wantGitHubCommand...))
 			assert.Equal(t, config.CopyGitConfig, test.wantCopyGitConfig)
 			assert.DeepEqual(t, config.Env, test.wantEnvironment)

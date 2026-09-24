@@ -96,7 +96,7 @@ remain unchanged until the feature is complete.
   report conflicting copied Git rules that prevent HTTPS. Keep other hosts
   unaffected and shared repository remotes unchanged. Do not run persistent
   login/setup-git commands or store tokens in URLs, wrappers, or config files.
-- [ ] Add table-driven configuration and resolver tests with `gotest.tools/v3`
+- [x] Add table-driven configuration and resolver tests with `gotest.tools/v3`
   and larger fixtures in `testdata/`. Cover defaults, inheritance, global-only
   command validation, disabled mode, token precedence, missing/malformed tokens,
   command arguments without shell expansion, host-home working directory,
