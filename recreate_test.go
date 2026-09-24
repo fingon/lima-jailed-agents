@@ -297,6 +297,14 @@ func unwrapGuestPathArguments(arguments []string) []string {
 	return arguments
 }
 
+func joinedOperations(operations [][]string) string {
+	lines := make([]string, 0, len(operations))
+	for _, operation := range operations {
+		lines = append(lines, strings.Join(operation, " "))
+	}
+	return strings.Join(lines, "\n")
+}
+
 func vmFixture(t *testing.T, status string) (string, string, WorkflowOptions) {
 	t.Helper()
 	root := t.TempDir()
@@ -512,6 +520,46 @@ func TestMakeCommandPassesThroughGuestArgumentsAndExitStatus(t *testing.T) {
 				"shell", "--workdir", project, vmName, shellCommand, shellCommandFlag, guestPathBootstrapScript, programName,
 				"make", "-f", "Makefile", "target with spaces",
 			})
+		})
+	}
+}
+
+func TestShellAndMakeOnlyInstallNodeWhenRequested(t *testing.T) {
+	for _, test := range []struct {
+		name            string
+		command         string
+		packages        string
+		wantNodeInstall bool
+	}{
+		{name: "shell without agents", command: "shell", packages: "[]"},
+		{name: "make without agents", command: makeCommand, packages: "[]"},
+		{name: "shell with requested Node packages", command: "shell", packages: "[nodejs, npm]", wantNodeInstall: true},
+		{name: "make with requested Node packages", command: makeCommand, packages: "[nodejs, npm]", wantNodeInstall: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			project, _, options := vmFixture(t, limaStatusRunning)
+			root := filepath.Dir(project)
+			content := "packages: " + test.packages + "\ncopy_git_config: false\n"
+			assert.NilError(t, os.WriteFile(filepath.Join(project, projectConfigName), []byte(content), 0o600))
+			t.Setenv("HOME", root)
+			t.Setenv(xdgConfigHomeEnv, filepath.Join(root, "config"))
+			t.Setenv("PATH", filepath.Dir(options.LimaCommand)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+			cli := CLI{ProjectState: true}
+			if test.command == "shell" {
+				cli.Shell.Arguments = []string{"--", "true"}
+			} else {
+				cli.Make.Arguments = []string{"--", "true"}
+			}
+			code, err := runCommand(&cli, test.command, project, project)
+			assert.NilError(t, err)
+			assert.Equal(t, code, 0)
+
+			database, err := readVMDatabase()
+			assert.NilError(t, err)
+			operationText := joinedOperations(database.Operations)
+			assert.Equal(t, strings.Contains(operationText, "nodejs") && strings.Contains(operationText, "npm"), test.wantNodeInstall)
+			assert.Assert(t, !strings.Contains(operationText, "snap"))
 		})
 	}
 }

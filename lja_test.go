@@ -714,15 +714,28 @@ func TestInstructionRefreshIsAtomicAndOptional(t *testing.T) {
 }
 
 func TestAgentLaunchUsesValidatedVMAndRetryableGuestInstallation(t *testing.T) {
-	root := t.TempDir()
-	project := filepath.Join(root, "project")
-	assert.NilError(t, os.Mkdir(project, 0o755))
-	vmName, err := ProjectVMName(project)
-	assert.NilError(t, err)
-	state := filepath.Join(root, "state")
-	locks := filepath.Join(root, "locks")
-	commandPath := filepath.Join(root, "fake-limactl")
-	command := `#!/bin/sh
+	for _, test := range []struct {
+		name               string
+		nodeInitiallyReady bool
+		npmInitiallyReady  bool
+		wantNativeInstall  bool
+	}{
+		{name: "absent runtime", wantNativeInstall: true},
+		{name: "partial runtime with node", nodeInitiallyReady: true, wantNativeInstall: true},
+		{name: "partial runtime with npm", npmInitiallyReady: true, wantNativeInstall: true},
+		{name: "working custom runtime", nodeInitiallyReady: true, npmInitiallyReady: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			project := filepath.Join(root, "project")
+			assert.NilError(t, os.Mkdir(project, 0o755))
+			vmName, err := ProjectVMName(project)
+			assert.NilError(t, err)
+			state := filepath.Join(root, "state")
+			locks := filepath.Join(root, "locks")
+			logPath := filepath.Join(root, "operations")
+			commandPath := filepath.Join(root, "fake-limactl")
+			command := `#!/bin/sh
 if [ "$1" = "list" ]; then
     printf '{"name":"%s","status":"Running","config":{"mounts":[{"location":"%s","writable":true},{"location":"%s","writable":true}]}}\n' "$FAKE_VM" "$FAKE_PROJECT" "$FAKE_STATE"
     exit 0
@@ -734,6 +747,7 @@ shift 4
 if [ "$1" = "sh" ] && [ "$2" = "-c" ] && [ "$4" = "lja" ]; then
     shift 4
 fi
+printf '%s\0' "$@" >> "$FAKE_LOG"
 case "$1" in
     true)
         exit 0
@@ -803,44 +817,60 @@ case "$1" in
 esac
 exit 98
 `
-	assert.NilError(t, os.WriteFile(commandPath, []byte(command), 0o755))
-	t.Setenv("FAKE_PROJECT", project)
-	t.Setenv("FAKE_VM", vmName)
-	t.Setenv("FAKE_ROOT", root)
-	t.Setenv("FAKE_STATE", state)
-	t.Setenv("HOME", root)
+			assert.NilError(t, os.WriteFile(commandPath, []byte(command), 0o755))
+			if test.nodeInitiallyReady {
+				assert.NilError(t, os.WriteFile(filepath.Join(root, "node"), nil, 0o600))
+			}
+			if test.npmInitiallyReady {
+				assert.NilError(t, os.WriteFile(filepath.Join(root, "npm"), nil, 0o600))
+			}
+			t.Setenv("FAKE_PROJECT", project)
+			t.Setenv("FAKE_VM", vmName)
+			t.Setenv("FAKE_ROOT", root)
+			t.Setenv("FAKE_STATE", state)
+			t.Setenv("FAKE_LOG", logPath)
+			t.Setenv("HOME", root)
 
-	development := DefaultDevelopmentConfig()
-	development.Packages = []string{}
-	development.CopyGitConfig = false
-	code, err := RunAgent(project, codexAgentName, nil, nil, "", WorkflowOptions{
-		StateRoot:     state,
-		Development:   &development,
-		LimaCommand:   commandPath,
-		LockDirectory: locks,
-	})
-	assert.NilError(t, err)
-	assert.Equal(t, code, 17)
-	_, err = os.Stat(filepath.Join(root, "node"))
-	assert.NilError(t, err)
-	_, err = os.Stat(filepath.Join(root, "npm"))
-	assert.NilError(t, err)
-	_, err = os.Stat(filepath.Join(root, "codex"))
-	assert.NilError(t, err)
-	configPath := filepath.Join(state, codexStateDirectoryName, codexConfigName)
-	_, err = os.Stat(configPath)
-	assert.NilError(t, err)
-	assert.NilError(t, os.Remove(configPath))
-	code, err = RunAgent(project, codexAgentName, []string{"login"}, nil, "", WorkflowOptions{
-		StateRoot:     state,
-		Development:   &development,
-		LimaCommand:   commandPath,
-		LockDirectory: locks,
-	})
-	assert.NilError(t, err)
-	assert.Equal(t, code, 17)
-	_, err = os.Stat(configPath)
-	assert.Assert(t, os.IsNotExist(err))
+			development := DefaultDevelopmentConfig()
+			development.Packages = []string{}
+			development.CopyGitConfig = false
+			code, err := RunAgent(project, codexAgentName, nil, nil, "", WorkflowOptions{
+				StateRoot:     state,
+				Development:   &development,
+				LimaCommand:   commandPath,
+				LockDirectory: locks,
+			})
+			assert.NilError(t, err)
+			assert.Equal(t, code, 17)
+			_, err = os.Stat(filepath.Join(root, "node"))
+			assert.NilError(t, err)
+			_, err = os.Stat(filepath.Join(root, "npm"))
+			assert.NilError(t, err)
+			_, err = os.Stat(filepath.Join(root, "codex"))
+			assert.NilError(t, err)
+			configPath := filepath.Join(state, codexStateDirectoryName, codexConfigName)
+			_, err = os.Stat(configPath)
+			assert.NilError(t, err)
+			assert.NilError(t, os.Remove(configPath))
+			code, err = RunAgent(project, codexAgentName, []string{"login"}, nil, "", WorkflowOptions{
+				StateRoot:     state,
+				Development:   &development,
+				LimaCommand:   commandPath,
+				LockDirectory: locks,
+			})
+			assert.NilError(t, err)
+			assert.Equal(t, code, 17)
+			_, err = os.Stat(configPath)
+			assert.Assert(t, os.IsNotExist(err))
+
+			operations, err := os.ReadFile(logPath)
+			assert.NilError(t, err)
+			operationText := string(operations)
+			assert.Assert(t, !strings.Contains(operationText, "snap"))
+			assert.Equal(t, strings.Contains(operationText, "apt-get install"), test.wantNativeInstall)
+			assert.Equal(t, strings.Count(operationText, "npm\x00install"), 1)
+		})
+	}
 }
 
 func TestGitConfigCopiesAndWriteScript(t *testing.T) {

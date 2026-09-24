@@ -42,7 +42,7 @@ below.
   providers, invalid package names, unsupported distributions, missing tools,
   failed connections, query failures, install failures, and post-install
   verification. Cover GPG dependency mapping and unchanged setup ordering.
-- [ ] Test absent/partial runtimes, working custom runtime reuse, failing
+- [x] Test absent/partial runtimes, working custom runtime reuse, failing
   executables, incompatible engines, agent reuse and update, and absence of
   Snap commands. Ensure shell/make without agents do not install Node unless
   requested through `packages`.
