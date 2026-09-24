@@ -286,10 +286,10 @@ func (backend guestPackageBackend) nodePackageNames() []string {
 	return append([]string{}, backend.nodePackages...)
 }
 
-func ensureGuestPackagesWithBackend(project string, vmName string, packageNames []string, backend guestPackageBackend, limactlCommand string) error {
+func ensureGuestPackagesWithBackend(project string, vmName string, packageNames []string, backend guestPackageBackend, limactlCommand string, contexts ...context.Context) error {
 	missing := make([]string, 0, len(packageNames))
 	for _, packageName := range packageNames {
-		installed, queryErr := backend.queryPackage(project, vmName, packageName, limactlCommand)
+		installed, queryErr := backend.queryPackage(project, vmName, packageName, limactlCommand, contexts...)
 		if queryErr != nil {
 			return queryErr
 		}
@@ -302,11 +302,11 @@ func ensureGuestPackagesWithBackend(project string, vmName string, packageNames 
 	}
 
 	slog.Info("installing packages", "backend", backend.name, "packages", missing, "vm", vmName)
-	if err := backend.installPackages(project, vmName, missing, limactlCommand); err != nil {
+	if err := backend.installPackages(project, vmName, missing, limactlCommand, contexts...); err != nil {
 		return err
 	}
 	for _, packageName := range missing {
-		installed, queryErr := backend.queryPackage(project, vmName, packageName, limactlCommand)
+		installed, queryErr := backend.queryPackage(project, vmName, packageName, limactlCommand, contexts...)
 		if queryErr != nil {
 			return queryErr
 		}

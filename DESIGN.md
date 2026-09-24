@@ -335,12 +335,23 @@ uppercase letters and underscores; options, paths, URLs, globs, and dependency
 expressions are rejected. Git and GPG dependencies are mapped to `git` plus
 `gnupg` or `gnupg2`, and forwarding verifies `gpg` and `gpgconf` before setup.
 
-The shared Node recipe is:
+When an agent is requested, LJA first probes `node` and `npm` as runnable
+guest executables. Working installations are reused. If either executable is
+absent, LJA installs the backend-owned native `nodejs` and `npm` dependencies
+and verifies both commands afterward. A present but failing executable is
+reported as an error; it is not replaced.
+
+Agent packages are installed or updated with strict npm engine checking:
 
 ```text
-sudo snap install node --classic
-sudo npm install -g PACKAGE
+sudo npm install --engine-strict -g PACKAGE
 ```
+
+Engine incompatibility errors include the detected Node/npm versions and
+suggest selecting a newer template or using custom provisioning through setup
+or `lima.provision`. LJA does not install Snap, remove pre-existing Snap
+runtimes, add third-party repositories, or change the existing-agent reuse
+behavior.
 
 The selected agent executable is probed before installation and after package
 installation. Existing installations are reused; `update` explicitly installs
@@ -367,12 +378,12 @@ can invoke another by its ordinary guest executable name. Agent launches
 combine the selected agent, configured defaults, and `--with-agent` values in
 stable deduplicated order.
 
-## Planned: Fedora guests and native dependencies
+## Fedora guests and native dependencies
 
-This section describes future behavior, not implemented support. The current
-Lima creation and guest preparation behavior above remains authoritative until
-the tasks in [TODO.md](TODO.md#fedora-guests-and-native-dependencies) are complete.
-No additional distro, package-manager, or Node-provider settings are planned.
+This section records the native Lima creation and guest preparation design.
+Remaining test and live-validation work is tracked in
+[TODO.md](TODO.md#fedora-guests-and-native-dependencies). No additional distro,
+package-manager, or Node-provider settings are planned.
 
 ### Template selection
 
@@ -454,21 +465,21 @@ Ubuntu provides an [npm APT package](https://packages.ubuntu.com/noble/npm)
 that depends on Node.js. Fedora can satisfy the unversioned runtime requests
 through versioned packages and their
 [provided capabilities](https://packages.fedoraproject.org/pkgs/nodejs22/nodejs22/fedora-44.html).
-The backend must query those capabilities instead of assuming an installed
+The Fedora backend queries those capabilities instead of assuming an installed
 RPM is literally named `nodejs` or `npm`.
 
-LJA will reuse working `node` and `npm` executables. If either is absent, it
-will install the native runtime dependencies through the detected backend and
-verify both executables afterward. A present but failing executable is an
+LJA reuses working `node` and `npm` executables. If either is absent, it
+installs the native runtime dependencies through the detected backend and
+verifies both executables afterward. A present but failing executable is an
 error, not permission to silently replace a custom runtime. Automatic Snap
-installation and fallback will be removed entirely; pre-existing Snap
-installations will not be uninstalled.
+installation and fallback are not used; pre-existing Snap installations are
+not uninstalled.
 
-Agent packages will still be installed globally through npm. Install and
-update will enforce declared engine requirements with
-`sudo npm install --engine-strict -g PACKAGE`. Incompatibility errors will
-report the runtime versions and suggest selecting a newer template or
-provisioning a suitable system-wide runtime through existing configuration.
+Agent packages are installed globally through npm. Install and update enforce
+declared engine requirements with
+`sudo npm install --engine-strict -g PACKAGE`. Incompatibility errors report
+the runtime versions and suggest selecting a newer template or provisioning a
+suitable system-wide runtime through existing configuration.
 LJA will not automatically add third-party repositories or select a different
 runtime provider. Native package availability does not guarantee compatibility
 with every future agent release; successful agent executable probes remain

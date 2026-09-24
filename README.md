@@ -251,6 +251,14 @@ defaults, and any `--with-agent` values in stable deduplicated order.
 Recreation runs development setup once before promotion and prepares defaults
 on the replacement VM.
 
+When an agent is requested, working guest `node` and `npm` installations are
+reused. If either is absent, LJA installs native `nodejs` and `npm` dependencies
+through the selected backend and verifies both commands. Present but failing
+executables are reported. Global agent installation and update use npm's
+strict engine checking; incompatibility errors include runtime versions and
+suggest a newer template or custom provisioning. LJA does not install Snap or
+add third-party repositories.
+
 Only explicitly named caller variables are forwarded. Missing passthrough
 variables are errors, empty values are preserved, and values are never stored
 in persistent wrappers or printed by `config`. LJA-managed agent state

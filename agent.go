@@ -19,13 +19,13 @@ const (
 	agentInstructionFileName         = "AGENTS.md"
 	claudeInstructionFileName        = "CLAUDE.md"
 	agentWrapperRoot                 = "/tmp/lja"
-	snapCommand                      = "snap"
-	snapNodePackage                  = "node"
-	snapClassicFlag                  = "--classic"
+	nodeCommand                      = "node"
 	sudoCommand                      = "sudo"
 	npmCommand                       = "npm"
 	installCommand                   = "install"
 	npmGlobalFlag                    = "-g"
+	npmEngineStrictFlag              = "--engine-strict"
+	versionFlag                      = "--version"
 	aptGetCommand                    = "apt-get"
 	codeXHomeEnvironment             = "CODEX_HOME"
 	claudeConfigEnvironment          = "CLAUDE_CONFIG_DIR"
@@ -153,47 +153,118 @@ func effectiveDevelopmentPackages(config DevelopmentConfig) []string {
 	return (guestPackageBackend{gitPackage: gitCommand, gpgPackage: gpgPackage}).developmentPackageNames(config)
 }
 
+func guestExecutableVersion(project string, vmName string, executable string, limactlCommand string, contexts ...context.Context) (string, string, error) {
+	executablePath, err := guestExecutablePath(project, vmName, executable, limactlCommand, contexts...)
+	if err != nil {
+		return "", "", err
+	}
+	if executablePath == "" {
+		return "", "", nil
+	}
+	options := defaultProcessOptions(limactlCommand, contexts...)
+	options.captureOutput = true
+	options.check = false
+	result, err := runGuest(project, vmName, []string{executable, versionFlag}, options, nil)
+	if err != nil {
+		return "", "", ljaError("cannot run guest executable %s in VM %s: %w", executable, vmName, err)
+	}
+	if result.ExitCode != 0 {
+		if connectionErr := verifyGuestConnection(project, vmName, limactlCommand, contexts...); connectionErr != nil {
+			return "", "", ljaError("guest executable %s is present but failed in VM %s: %w", executable, vmName, connectionErr)
+		}
+		detail := processOutput(result)
+		if detail != "" {
+			return "", "", ljaError("guest executable %s is present but failed in VM %s: exit status %d: %s", executable, vmName, result.ExitCode, detail)
+		}
+		return "", "", ljaError("guest executable %s is present but failed in VM %s: exit status %d", executable, vmName, result.ExitCode)
+	}
+	version := strings.TrimSpace(string(result.Stdout))
+	if version == "" {
+		return "", "", ljaError("guest executable %s in VM %s returned no version", executable, vmName)
+	}
+	if strings.IndexByte(version, 0) >= 0 || strings.ContainsAny(version, "\r\n") {
+		return "", "", ljaError("guest executable %s in VM %s returned an invalid version", executable, vmName)
+	}
+	return executablePath, version, nil
+}
+
+func nodeRuntimeDescription(project string, vmName string, limactlCommand string, contexts ...context.Context) (string, error) {
+	_, nodeVersion, err := guestExecutableVersion(project, vmName, nodeCommand, limactlCommand, contexts...)
+	if err != nil {
+		return "", err
+	}
+	_, npmVersion, err := guestExecutableVersion(project, vmName, npmCommand, limactlCommand, contexts...)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("node=%s npm=%s", nodeVersion, npmVersion), nil
+}
+
 func ensureNodeRuntime(project string, vmName string, limactlCommand string, contexts ...context.Context) error {
-	nodeAvailable, err := guestExecutableAvailable(project, vmName, snapNodePackage, limactlCommand, contexts...)
+	nodePath, _, err := guestExecutableVersion(project, vmName, nodeCommand, limactlCommand, contexts...)
 	if err != nil {
 		return err
 	}
-	npmAvailable, err := guestExecutableAvailable(project, vmName, npmCommand, limactlCommand, contexts...)
+	npmPath, _, err := guestExecutableVersion(project, vmName, npmCommand, limactlCommand, contexts...)
 	if err != nil {
 		return err
 	}
-	if nodeAvailable && npmAvailable {
+	if nodePath != "" && npmPath != "" {
 		return nil
 	}
-	snapAvailable, err := guestExecutableAvailable(project, vmName, snapCommand, limactlCommand, contexts...)
+	backend, err := packageBackendForGuest(project, vmName, limactlCommand, contexts...)
 	if err != nil {
+		return ljaError("cannot prepare Node runtime in VM %s: %w", vmName, err)
+	}
+	packages := backend.nodePackageNames()
+	if len(packages) == 0 {
+		return ljaError("%s backend has no Node runtime dependencies for VM %s", backend.name, vmName)
+	}
+	slog.Info("installing Node runtime", "backend", backend.name, "packages", packages, "vm", vmName)
+	if err := ensureGuestPackagesWithBackend(project, vmName, packages, backend, limactlCommand, contexts...); err != nil {
 		return err
 	}
-	if !snapAvailable {
-		return ljaError("guest prerequisite %s is missing in VM %s", snapCommand, vmName)
-	}
-	slog.Info("installing Node", "vm", vmName)
-	options := defaultProcessOptions(limactlCommand, contexts...)
-	if _, err := runGuest(project, vmName, []string{sudoCommand, snapCommand, "install", snapNodePackage, snapClassicFlag}, options, nil); err != nil {
-		return err
-	}
-	for _, executable := range []string{snapNodePackage, npmCommand} {
-		available, err := guestExecutableAvailable(project, vmName, executable, limactlCommand, contexts...)
-		if err != nil {
-			return err
+	for _, executable := range []string{nodeCommand, npmCommand} {
+		path, _, probeErr := guestExecutableVersion(project, vmName, executable, limactlCommand, contexts...)
+		if probeErr != nil {
+			return probeErr
 		}
-		if !available {
-			return ljaError("Node installation completed but guest executable %s is still missing in VM %s", executable, vmName)
+		if path == "" {
+			return ljaError("Node runtime installation with %s backend in VM %s did not provide executable %s", backend.name, vmName, executable)
 		}
 	}
 	return nil
 }
 
+func npmEngineFailure(output string) bool {
+	lower := strings.ToLower(output)
+	return strings.Contains(lower, "ebadengine") || strings.Contains(lower, "unsupported engine") || (strings.Contains(lower, "engine") && strings.Contains(lower, "node"))
+}
+
 func installAgentPackage(project string, vmName string, agent AgentSpec, limactlCommand string, contexts ...context.Context) error {
 	slog.Info("installing agent", "agent", agent.Name, "package", agent.Package, "vm", vmName)
 	options := defaultProcessOptions(limactlCommand, contexts...)
-	_, err := runGuest(project, vmName, []string{sudoCommand, npmCommand, installCommand, npmGlobalFlag, agent.Package}, options, nil)
-	return err
+	options.captureOutput = true
+	options.check = false
+	result, err := runGuest(project, vmName, []string{sudoCommand, npmCommand, installCommand, npmEngineStrictFlag, npmGlobalFlag, agent.Package}, options, nil)
+	if err != nil {
+		return ljaError("cannot install agent package %s in VM %s: %w", agent.Package, vmName, err)
+	}
+	if result.ExitCode == 0 {
+		return nil
+	}
+	detail := processOutput(result)
+	runtime, runtimeErr := nodeRuntimeDescription(project, vmName, limactlCommand, contexts...)
+	if runtimeErr != nil {
+		runtime = fmt.Sprintf("runtime version lookup failed: %v", runtimeErr)
+	}
+	if npmEngineFailure(detail) {
+		return ljaError("cannot install agent package %s in VM %s: npm engine requirements are incompatible with guest runtime (%s); select a newer template or use custom provisioning through setup or lima.provision to install a compatible system-wide Node runtime: %s", agent.Package, vmName, runtime, detail)
+	}
+	if detail != "" {
+		return ljaError("cannot install agent package %s in VM %s with guest runtime (%s): exit status %d: %s", agent.Package, vmName, runtime, result.ExitCode, detail)
+	}
+	return ljaError("cannot install agent package %s in VM %s with guest runtime (%s): exit status %d", agent.Package, vmName, runtime, result.ExitCode)
 }
 
 func installAgentLocked(project string, vmName string, agent AgentSpec, update bool, limactlCommand string, contexts ...context.Context) (string, error) {

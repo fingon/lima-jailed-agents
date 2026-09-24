@@ -2,10 +2,10 @@
 
 ## Fedora guests and native dependencies
 
-The target behavior is described in
-[Planned: Fedora guests and native dependencies](DESIGN.md#planned-fedora-guests-and-native-dependencies).
-This feature is not implemented. Current runtime behavior and README support
-claims remain unchanged until implementation.
+The current design and runtime behavior are described in
+[Fedora guests and native dependencies](DESIGN.md#fedora-guests-and-native-dependencies).
+Remaining test, live-validation, and documentation review tasks are tracked
+below.
 
 - [x] Replace Lima `--set` creation overrides with the effective native Lima
   mapping serialized as YAML on stdin to `limactl create ... -`. Inject
@@ -26,7 +26,7 @@ claims remain unchanged until implementation.
   Accept ordinary RPM names with uppercase letters and underscores while
   preserving Debian architecture qualifiers. Reject options, paths, URLs,
   globs, and arbitrary dependency expressions.
-- [ ] Remove automatic Snap installation and fallback. Reuse working Node/npm
+- [x] Remove automatic Snap installation and fallback. Reuse working Node/npm
   installations; install native `nodejs`/`npm` dependencies when either is
   missing and verify both commands. Report present but failing executables.
   Enforce npm engine requirements during global agent install/update and

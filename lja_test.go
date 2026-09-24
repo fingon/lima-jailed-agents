@@ -738,17 +738,21 @@ case "$1" in
     true)
         exit 0
         ;;
+    cat)
+        printf 'ID=ubuntu\n'
+        exit 0
+        ;;
     command)
         case "$3" in
             node|npm)
-                if [ -f "$FAKE_ROOT/node" ]; then
+                if [ -f "$FAKE_ROOT/$3" ]; then
                     printf '/usr/bin/%s\n' "$3"
                     exit 0
                 fi
                 exit 1
                 ;;
-            snap)
-                printf '/usr/bin/snap\n'
+            dpkg-query|apt-get|sudo)
+                printf '/usr/bin/%s\n' "$3"
                 exit 0
                 ;;
             codex)
@@ -761,15 +765,27 @@ case "$1" in
         esac
         exit 1
         ;;
-    dpkg-query)
-        printf 'install ok installed'
-        exit 0
-        ;;
-    sudo)
-        if [ "$2" = "snap" ]; then
-            : > "$FAKE_ROOT/node"
+    node|npm)
+        if [ -f "$FAKE_ROOT/$1" ]; then
+            printf 'v22.0.0\n'
             exit 0
         fi
+        exit 42
+        ;;
+    dpkg-query)
+        if [ -f "$FAKE_ROOT/node" ] && [ -f "$FAKE_ROOT/npm" ]; then
+            printf 'install ok installed'
+        fi
+        exit 0
+        ;;
+    sh)
+        if [ "$2" = "-eu" ] && [ "$3" = "-c" ]; then
+            : > "$FAKE_ROOT/node"
+            : > "$FAKE_ROOT/npm"
+            exit 0
+        fi
+        ;;
+    sudo)
         if [ "$2" = "npm" ]; then
             : > "$FAKE_ROOT/codex"
             exit 0
@@ -806,6 +822,8 @@ exit 98
 	assert.NilError(t, err)
 	assert.Equal(t, code, 17)
 	_, err = os.Stat(filepath.Join(root, "node"))
+	assert.NilError(t, err)
+	_, err = os.Stat(filepath.Join(root, "npm"))
 	assert.NilError(t, err)
 	_, err = os.Stat(filepath.Join(root, "codex"))
 	assert.NilError(t, err)

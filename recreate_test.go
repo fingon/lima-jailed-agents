@@ -15,14 +15,16 @@ import (
 )
 
 const (
-	vmProcessEnv            = "LJA_TEST_VM_PROCESS"
-	vmDatabaseEnv           = "LJA_TEST_VM_DATABASE"
-	vmFailureEnv            = "LJA_TEST_VM_FAILURE"
-	vmBinaryEnv             = "LJA_TEST_BINARY"
-	vmPackageInstallNoopEnv = "LJA_TEST_PACKAGE_INSTALL_NOOP"
-	testOriginalID          = "original"
-	testReplacementID       = "replacement"
-	testSetupCommand        = "test-setup"
+	vmProcessEnv             = "LJA_TEST_VM_PROCESS"
+	vmDatabaseEnv            = "LJA_TEST_VM_DATABASE"
+	vmFailureEnv             = "LJA_TEST_VM_FAILURE"
+	vmBinaryEnv              = "LJA_TEST_BINARY"
+	vmPackageInstallNoopEnv  = "LJA_TEST_PACKAGE_INSTALL_NOOP"
+	vmNodeRuntimeModeEnv     = "LJA_TEST_NODE_RUNTIME_MODE"
+	vmAgentInstallFailureEnv = "LJA_TEST_AGENT_INSTALL_FAILURE"
+	testOriginalID           = "original"
+	testReplacementID        = "replacement"
+	testSetupCommand         = "test-setup"
 )
 
 type testMount struct {
@@ -45,6 +47,15 @@ type vmDatabase struct {
 	CreateWorkingDirectories []string
 	Failed                   int
 	PackageInstallationDone  bool
+}
+
+type vmProcessExitError struct {
+	code    int
+	message string
+}
+
+func (err vmProcessExitError) Error() string {
+	return err.message
 }
 
 func (database *vmDatabase) save() error {
@@ -70,6 +81,10 @@ func TestVMProcess(t *testing.T) {
 		return
 	}
 	if err := runVMProcess(); err != nil {
+		if exitErr, ok := err.(vmProcessExitError); ok {
+			fmt.Fprintln(os.Stderr, exitErr.message)
+			os.Exit(exitErr.code)
+		}
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(23)
 	}
@@ -225,8 +240,21 @@ func runVMProcess() error {
 	case "delete":
 		delete(database.VMs, name)
 	case "shell":
+		if len(guestArguments) >= 3 && guestArguments[0] == sudoCommand && guestArguments[1] == npmCommand && guestArguments[2] == installCommand && os.Getenv(vmAgentInstallFailureEnv) == "1" {
+			fmt.Fprintln(os.Stderr, "npm ERR! code EBADENGINE")
+			return vmProcessExitError{code: 23, message: "npm engine requirements are incompatible"}
+		}
 		if len(guestArguments) == 2 && guestArguments[0] == catCommand && guestArguments[1] == osReleasePath {
 			if _, err := fmt.Fprintln(os.Stdout, "ID=ubuntu"); err != nil {
+				return err
+			}
+		}
+		if len(guestArguments) == 2 && guestArguments[1] == versionFlag && (guestArguments[0] == nodeCommand || guestArguments[0] == npmCommand) {
+			if guestArguments[0] == nodeCommand && os.Getenv(vmNodeRuntimeModeEnv) == "failing" {
+				fmt.Fprintln(os.Stderr, "node: cannot execute")
+				return vmProcessExitError{code: 23, message: "node runtime failed"}
+			}
+			if _, err := fmt.Fprintln(os.Stdout, "v22.0.0"); err != nil {
 				return err
 			}
 		}
@@ -741,9 +769,46 @@ func TestUpdateConfiguredAgentInstallsOnce(t *testing.T) {
 	assert.NilError(t, err)
 	installations := 0
 	for _, operation := range database.Operations {
-		if strings.Contains(strings.Join(operation, " "), "npm install -g @openai/codex") {
+		if strings.Contains(strings.Join(operation, " "), "npm install --engine-strict -g @openai/codex") {
 			installations++
 		}
 	}
 	assert.Equal(t, installations, 1)
+}
+
+func TestAgentInstallationReportsRuntimeFailures(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		environment string
+		value       string
+		want        []string
+	}{
+		{
+			name:        "failing node",
+			environment: vmNodeRuntimeModeEnv,
+			value:       "failing",
+			want:        []string{"guest executable node is present but failed", "node runtime failed"},
+		},
+		{
+			name:        "incompatible engine",
+			environment: vmAgentInstallFailureEnv,
+			value:       "1",
+			want: []string{
+				"EBADENGINE",
+				"node=v22.0.0 npm=v22.0.0",
+				"newer template",
+				"custom provisioning",
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			project, _, options := vmFixture(t, limaStatusRunning)
+			t.Setenv(test.environment, test.value)
+
+			_, err := InstallAgent(project, codexAgentName, true, options)
+			for _, want := range test.want {
+				assert.ErrorContains(t, err, want)
+			}
+		})
+	}
 }
