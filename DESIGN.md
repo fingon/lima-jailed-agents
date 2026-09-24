@@ -358,6 +358,113 @@ can invoke another by its ordinary guest executable name. Agent launches
 combine the selected agent, configured defaults, and `--with-agent` values in
 stable deduplicated order.
 
+## Planned: Fedora guests and native dependencies
+
+This section describes future behavior, not implemented support. The current
+Lima creation and guest preparation behavior above remains authoritative until
+the tasks in [TODO.md](TODO.md#fedora-guests-and-native-dependencies) are complete.
+No additional distro, package-manager, or Node-provider settings are planned.
+
+### Template selection
+
+Select Fedora through the existing native Lima mapping:
+
+```yaml
+lima:
+  base: template:fedora
+packages:
+  - git
+  - make
+  - gcc
+```
+
+Lima provides the [Fedora template](https://lima-vm.io/docs/templates/).
+Creation will serialize the effective `lima` mapping as YAML and pass it on
+stdin to `limactl create ... -`, replacing the current `--set` transport.
+This is necessary because Lima expands template bases before applying those
+command-line overrides. When both `base` and `images` are absent, LJA will
+inject `base: template:default` into creation input only; `lja config` will
+continue reporting configured values rather than expanded template defaults.
+Explicit empty values will not count as absent.
+
+Global/project configuration will retain its current merge rules. Lima will
+then apply its own template inheritance semantics to the merged input. Relative
+local template references in that input will resolve from the selected project
+directory. References inside an external template remain relative to that
+template according to Lima's rules. LJA will continue rejecting `lima.mounts`,
+applying its exact mount set through `--mount-only`, and validating effective
+mounts before boot.
+
+Template changes will apply only during creation or explicit recreation.
+Existing guests will use their actual installed distribution for preparation,
+regardless of the currently configured template. No new public configuration
+fields or CLI options are needed.
+
+### Guest package backends
+
+When package preparation is needed, LJA will read `/etc/os-release` in the
+guest and select an internal backend for Ubuntu/Debian or Fedora. It will
+verify the required package tools and report unsupported distributions or
+missing tools explicitly, without guessing from the configured template or
+falling back to a different package manager.
+
+| Behavior | Ubuntu/Debian | Fedora |
+| --- | --- | --- |
+| Query installed dependencies | `dpkg-query` | RPM queries, including provided capabilities |
+| Install missing dependencies | `sudo apt-get update`, then `sudo apt-get install -y` | `sudo dnf install -y` |
+| Default development tools | `git`, `make` | `git`, `make` |
+| Automatic Git dependency | `git` | `git` |
+| Automatic GPG dependency | `gnupg` | `gnupg2` |
+| Node runtime dependencies | `nodejs`, `npm` | `nodejs`, `npm` capabilities |
+
+The existing `packages` list will contain native package names for the chosen
+guest. Replacement, deduplication, and explicit-empty behavior will remain;
+only LJA-owned dependencies will be translated between distributions. Package
+validation will accept ordinary RPM names, including uppercase letters and
+underscores, while retaining Debian architecture qualifiers. Options, paths,
+URLs, globs, and arbitrary dependency expressions will remain disallowed.
+Packages will remain safely quoted or passed as arguments without shell
+interpretation.
+
+Each preparation phase will query dependencies, install missing packages in
+one batch, and verify the result. Query handling must distinguish absence from
+connection failures and package-database errors. Installation failures must
+include the VM, backend, and requested dependencies in their context. The
+backend will also verify required executables, including `gpg` and `gpgconf`
+for forwarding, rather than treating package presence as sufficient.
+
+Development dependencies will still precede Git preparation and setup; setup
+will still precede agent installation. Existing `lima.provision` is the escape
+hatch for preparing repositories before development package installation.
+Existing setup commands can prepare a custom system-wide Node runtime before
+agent installation. Host-side `make dep` changes are outside this design.
+
+### Node and agents without Snap
+
+Ubuntu provides an [npm APT package](https://packages.ubuntu.com/noble/npm)
+that depends on Node.js. Fedora can satisfy the unversioned runtime requests
+through versioned packages and their
+[provided capabilities](https://packages.fedoraproject.org/pkgs/nodejs22/nodejs22/fedora-44.html).
+The backend must query those capabilities instead of assuming an installed
+RPM is literally named `nodejs` or `npm`.
+
+LJA will reuse working `node` and `npm` executables. If either is absent, it
+will install the native runtime dependencies through the detected backend and
+verify both executables afterward. A present but failing executable is an
+error, not permission to silently replace a custom runtime. Automatic Snap
+installation and fallback will be removed entirely; pre-existing Snap
+installations will not be uninstalled.
+
+Agent packages will still be installed globally through npm. Install and
+update will enforce declared engine requirements with
+`sudo npm install --engine-strict -g PACKAGE`. Incompatibility errors will
+report the runtime versions and suggest selecting a newer template or
+provisioning a suitable system-wide runtime through existing configuration.
+LJA will not automatically add third-party repositories or select a different
+runtime provider. Native package availability does not guarantee compatibility
+with every future agent release; successful agent executable probes remain
+required after installation. Existing-agent reuse remains unchanged.
+
 ## Instructions and Codex trust
 
 Instruction synchronization is one-way and atomic. Optional host sources are:
@@ -425,6 +532,120 @@ the copy set. Content is transferred through stdin to a guest script that
 creates private parents, rejects symlinks, and atomically replaces each file.
 Included files are published before the root `.gitconfig`, so a retry can
 complete a partial transfer. The host configuration is never modified.
+
+## Planned: GitHub authentication
+
+This section describes future behavior, not implemented support. The tasks in
+[TODO.md](TODO.md#github-authentication) cover implementation. Existing manual
+environment passthrough, package configuration, and setup remain available.
+Managed support initially targets `github.com`; Enterprise hosts, SSH-agent
+forwarding, token minting, and automatic renewal are outside this feature.
+
+### Configuration and token resolution
+
+The planned defaults are:
+
+```yaml
+github:
+  enabled: false
+  token_command: []
+```
+
+Global and project configuration may set `github.enabled`, with project values
+overriding global values. Only global configuration may define
+`github.token_command`, because it executes on the host outside the VM. Reject
+that key in project configuration even when empty or disabled. The command is
+an argument vector; an empty list disables command fallback. Example global
+configuration for explicitly using an existing host GitHub CLI login:
+
+```yaml
+github:
+  token_command: ["gh", "auth", "token", "--hostname", "github.com"]
+```
+
+A project enables support with `github: {enabled: true}`. No additional
+`env_passthrough` entry is needed. When enabled, resolve the first nonempty host
+environment value in order: `GH_TOKEN`, then `GITHUB_TOKEN`. If neither exists,
+run the explicitly configured token command; otherwise report a missing-token
+error. There is no implicit host credential-store lookup. This environment
+precedence follows the
+[GitHub CLI environment contract](https://cli.github.com/manual/gh_help_environment).
+Reject `GH_TOKEN` and `GITHUB_TOKEN` entries in configured `env` or
+`env_passthrough` while managed support is enabled, avoiding competing sources.
+Disabled support preserves existing manual behavior.
+
+Execute the command directly without shell expansion, from the host home
+directory, with closed stdin and a 30-second timeout. Resolve once per LJA
+invocation, including recreation, and retain the result only in memory. Accept
+one nonempty token line with an optional trailing LF or CRLF; reject embedded
+newlines and control characters. Apply the same token validation to environment
+values, without treating malformed values as permission to try another source.
+Command failure, timeout, or cancellation is an error. Diagnostics identify
+the executable and exit status or termination reason without printing captured
+stdout, stderr, or command arguments that might contain secrets.
+
+Resolve credentials only for operations that prepare or execute guest work.
+Configuration inspection, lifecycle-only commands, and an existing-VM no-op
+create do not require tokens or invoke the command. `lja config` will show the
+effective GitHub settings and command definition, never the resolved token;
+command arguments should name a credential source rather than embed a token.
+The next invocation resolves afresh, without persistent token caching or
+automatic refresh during an invocation.
+
+### Guest dependencies and Git integration
+
+Enabled support will automatically require `git` and `gh`, including when
+`packages` is empty, through the planned native package backends. Ubuntu and
+Fedora provide native `gh` packages; Node and npm are not dependencies of this
+integration. See the [Ubuntu package](https://packages.ubuntu.com/noble/gh) and
+[Fedora package](https://packages.fedoraproject.org/pkgs/gh/gh/).
+
+Prepare invocation-scoped authentication after ordinary Git configuration
+copying and before project setup. This also works with `copy_git_config: false`.
+Supply the selected token as `GH_TOKEN` to setup, shell/make, and agent commands;
+their subprocesses, including nested agents, inherit it. Package-manager
+commands do not need the token. Do not run an unconditional GitHub API probe
+during preparation: actual GitHub operations report expired credentials,
+insufficient permissions, and network failures.
+
+Use Git's `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_<n>`, and
+`GIT_CONFIG_VALUE_<n>` environment entries for temporary runtime settings.
+Preserve valid existing runtime entries and append managed entries; reject
+malformed existing entries instead of discarding them. For
+`credential.https://github.com.helper`, append an empty value to reset inherited
+helpers, followed by `!gh auth git-credential`. This provides the relevant
+credential integration without persistent `gh auth setup-git` changes. See
+[Git runtime configuration](https://git-scm.com/docs/git-config) and
+[GitHub's credential integration](https://cli.github.com/manual/gh_auth_setup-git).
+
+Append invocation-scoped `url.https://github.com/.insteadOf` entries for
+`git@github.com:` and `ssh://git@github.com/`. These allow existing SSH remotes
+to use HTTPS authentication without editing shared repository remotes or host
+configuration. Verify interaction with copied credential helpers and URL
+rewrites; report conflicting rules that prevent the intended HTTPS transport
+instead of silently attempting SSH. Other Git hosts retain their configuration.
+
+Do not run persistent `gh auth login`, copy host GitHub credential stores, or
+place tokens in Git URLs. Setup and launched commands share the invocation's
+token and Git settings; concurrent invocations must not overwrite one another's
+credentials or Git authentication settings. Disabling support on a subsequent
+invocation requires no persistent Git configuration cleanup.
+
+### Token permissions and lifetime
+
+Document repository-scoped token permissions according to the desired work:
+Contents read for fetch and write for push, Pull requests for PR operations,
+and Issues when needed. Organization approval requirements still apply. Link
+to GitHub's [token permission reference](https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens)
+rather than assuming one token scope grants every GitHub CLI operation.
+
+LJA must not write resolved tokens into configuration output, wrappers, logs,
+or credential files. The current Lima environment transport places values in
+process arguments; this design retains that transport and does not promise
+process-list secrecy. Guest commands receive a usable bearer token and can
+retain it. Ending LJA does not revoke the token or erase copies retained by
+guest processes. Unlike GPG forwarding, this is credential delivery rather than
+an invocation-limited connection to a host credential service.
 
 ## GPG forwarding
 
