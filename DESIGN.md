@@ -329,6 +329,11 @@ Each missing dependency is checked again after installation. Unsupported guest
 distributions, missing tools, package-database failures, and guest connection
 failures are reported with backend, VM, and dependency context. Agent
 installation is independent of the configured development package list.
+Configured package names remain native to the selected guest. Debian
+architecture qualifiers are accepted, and ordinary Fedora names may contain
+uppercase letters and underscores; options, paths, URLs, globs, and dependency
+expressions are rejected. Git and GPG dependencies are mapped to `git` plus
+`gnupg` or `gnupg2`, and forwarding verifies `gpg` and `gpgconf` before setup.
 
 The shared Node recipe is:
 

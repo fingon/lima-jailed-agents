@@ -37,42 +37,61 @@ func TestParseGuestOSRelease(t *testing.T) {
 
 func TestPackageBackendSelection(t *testing.T) {
 	for _, test := range []struct {
-		name          string
-		id            string
-		wantName      string
-		wantQuery     []string
-		wantInstall   []string
-		wantToolCount int
+		name            string
+		id              string
+		wantName        string
+		wantQuery       []string
+		wantInstall     []string
+		wantGPG         string
+		wantNode        []string
+		wantDevelopment []string
+		wantToolCount   int
 	}{
 		{
-			name:          "Ubuntu",
-			id:            "ubuntu",
-			wantName:      ubuntuDebianPackageBackend,
-			wantQuery:     []string{dpkgQueryCommand, "--show", "--showformat=${Status}", "make"},
-			wantInstall:   []string{shellCommand, "-eu", shellCommandFlag, "sudo apt-get update && sudo apt-get install -y 'make' 'gcc'"},
-			wantToolCount: 3,
+			name:            "Ubuntu",
+			id:              "ubuntu",
+			wantName:        ubuntuDebianPackageBackend,
+			wantQuery:       []string{dpkgQueryCommand, "--show", "--showformat=${Status}", "make"},
+			wantInstall:     []string{shellCommand, "-eu", shellCommandFlag, "sudo apt-get update && sudo apt-get install -y 'make' 'gcc'"},
+			wantGPG:         gpgPackage,
+			wantNode:        []string{"nodejs", npmCommand},
+			wantDevelopment: []string{"make", "git", gpgPackage},
+			wantToolCount:   3,
 		},
 		{
-			name:          "Debian",
-			id:            "debian",
-			wantName:      ubuntuDebianPackageBackend,
-			wantQuery:     []string{dpkgQueryCommand, "--show", "--showformat=${Status}", "make"},
-			wantInstall:   []string{shellCommand, "-eu", shellCommandFlag, "sudo apt-get update && sudo apt-get install -y 'make' 'gcc'"},
-			wantToolCount: 3,
+			name:            "Debian",
+			id:              "debian",
+			wantName:        ubuntuDebianPackageBackend,
+			wantQuery:       []string{dpkgQueryCommand, "--show", "--showformat=${Status}", "make"},
+			wantInstall:     []string{shellCommand, "-eu", shellCommandFlag, "sudo apt-get update && sudo apt-get install -y 'make' 'gcc'"},
+			wantGPG:         gpgPackage,
+			wantNode:        []string{"nodejs", npmCommand},
+			wantDevelopment: []string{"make", "git", gpgPackage},
+			wantToolCount:   3,
 		},
 		{
-			name:          "Fedora capability query",
-			id:            "fedora",
-			wantName:      fedoraPackageBackend,
-			wantQuery:     []string{rpmCommand, "-q", "--whatprovides", "make"},
-			wantInstall:   []string{sudoCommand, dnfCommand, installCommand, "-y", "make", "gcc"},
-			wantToolCount: 3,
+			name:            "Fedora capability query",
+			id:              "fedora",
+			wantName:        fedoraPackageBackend,
+			wantQuery:       []string{rpmCommand, "-q", "--whatprovides", "make"},
+			wantInstall:     []string{sudoCommand, dnfCommand, installCommand, "-y", "make", "gcc"},
+			wantGPG:         "gnupg2",
+			wantNode:        []string{"nodejs", npmCommand},
+			wantDevelopment: []string{"make", "git", "gnupg2"},
+			wantToolCount:   3,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			backend, err := packageBackendForOSRelease(guestOSRelease{ID: test.id})
 			assert.NilError(t, err)
 			assert.Equal(t, backend.name, test.wantName)
+			assert.Equal(t, backend.gpgPackage, test.wantGPG)
+			assert.DeepEqual(t, backend.nodePackageNames(), test.wantNode)
+			assert.DeepEqual(t, backend.developmentPackageNames(DevelopmentConfig{
+				Packages:      []string{"make", "git", "make"},
+				GPGForwarding: true,
+				CopyGitConfig: true,
+			}), test.wantDevelopment)
 			assert.DeepEqual(t, backend.queryArguments("make"), test.wantQuery)
 			assert.DeepEqual(t, backend.installArguments([]string{"make", "gcc"}), test.wantInstall)
 			assert.Equal(t, len(backend.requiredTools), test.wantToolCount)
@@ -96,6 +115,37 @@ func TestPackageQueryMissingClassification(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			assert.Equal(t, test.backend.packageIsMissing(test.result), test.want)
+		})
+	}
+}
+
+func TestPackageNameValidation(t *testing.T) {
+	assert.NilError(t, ValidateDevelopmentConfig([]byte("packages: [NodeJS_22-devel, libssl3:amd64]"), true))
+	for _, test := range []struct {
+		name    string
+		backend guestPackageBackend
+		values  []string
+		valid   bool
+	}{
+		{name: "Debian architecture qualifier", backend: guestPackageBackend{name: ubuntuDebianPackageBackend}, values: []string{"libssl3:amd64"}, valid: true},
+		{name: "Debian uppercase", backend: guestPackageBackend{name: ubuntuDebianPackageBackend}, values: []string{"NodeJS"}},
+		{name: "RPM uppercase and underscore", backend: guestPackageBackend{name: fedoraPackageBackend}, values: []string{"NodeJS_22-devel"}, valid: true},
+		{name: "RPM architecture qualifier", backend: guestPackageBackend{name: fedoraPackageBackend}, values: []string{"nodejs:amd64"}},
+		{name: "option", backend: guestPackageBackend{name: fedoraPackageBackend}, values: []string{"--help"}},
+		{name: "path", backend: guestPackageBackend{name: fedoraPackageBackend}, values: []string{"./nodejs"}},
+		{name: "URL", backend: guestPackageBackend{name: fedoraPackageBackend}, values: []string{"https://example.test/pkg"}},
+		{name: "glob", backend: guestPackageBackend{name: fedoraPackageBackend}, values: []string{"node*"}},
+		{name: "dependency expression", backend: guestPackageBackend{name: fedoraPackageBackend}, values: []string{"nodejs >= 22"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			for _, value := range test.values {
+				err := test.backend.validatePackageName(value)
+				if test.valid {
+					assert.NilError(t, err)
+				} else {
+					assert.ErrorContains(t, err, "invalid package name")
+				}
+			}
 		})
 	}
 }

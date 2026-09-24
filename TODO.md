@@ -20,7 +20,7 @@ claims remain unchanged until implementation.
   batch missing dependencies per phase, and verify installation. Distinguish
   missing packages from database and connection failures; propagate errors
   with VM, backend, and dependency context.
-- [ ] Map LJA-owned Git, GPG, and Node dependencies to the selected backend;
+- [x] Map LJA-owned Git, GPG, and Node dependencies to the selected backend;
   keep configured `packages` native and retain defaults, replacement, and
   deduplication. Verify required executables, including `gpg` and `gpgconf`.
   Accept ordinary RPM names with uppercase letters and underscores while

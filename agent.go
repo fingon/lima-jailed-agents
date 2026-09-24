@@ -150,15 +150,9 @@ func effectiveAgentNames(selectedAgent string, withAgents []string, config *Deve
 }
 
 func effectiveDevelopmentPackages(config DevelopmentConfig) []string {
-	packages := append([]string{}, config.Packages...)
-	if config.GPGForwarding {
-		packages = append(packages, gpgPackage)
-	}
-	if config.CopyGitConfig {
-		packages = append(packages, gitCommand)
-	}
-	return uniqueStrings(packages)
+	return (guestPackageBackend{gitPackage: gitCommand, gpgPackage: gpgPackage}).developmentPackageNames(config)
 }
+
 func ensureNodeRuntime(project string, vmName string, limactlCommand string, contexts ...context.Context) error {
 	nodeAvailable, err := guestExecutableAvailable(project, vmName, snapNodePackage, limactlCommand, contexts...)
 	if err != nil {
@@ -245,7 +239,11 @@ func prepareDevelopment(project string, vmName string, config *DevelopmentConfig
 		defer cleanup(&returnErr)
 		workflow = options.gpg
 	}
-	if err := ensureGuestPackages(project, vmName, effectiveDevelopmentPackages(actualConfig), limactlCommand); err != nil {
+	backend, err := ensureDevelopmentPackages(project, vmName, actualConfig, limactlCommand)
+	if err != nil {
+		return err
+	}
+	if err := verifyDevelopmentExecutables(project, vmName, actualConfig, backend, limactlCommand); err != nil {
 		return err
 	}
 	if actualConfig.CopyGitConfig {
@@ -253,7 +251,6 @@ func prepareDevelopment(project string, vmName string, config *DevelopmentConfig
 			return err
 		}
 	}
-	var err error
 	environment, err = workflow.environment(project, vmName, limactlCommand, environment)
 	if err != nil {
 		return err

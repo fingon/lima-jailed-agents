@@ -210,7 +210,10 @@ Configuration must be a single YAML mapping with string keys. Development
 settings retain their declared types; `lima` also accepts numeric values,
 nested mappings, and lists. Unknown development settings, duplicate keys, nulls,
 invalid UTF-8, and multiple documents are errors. YAML aliases in `lima` are
-rejected. Comments and multiline setup blocks are supported.
+rejected. Configured package names stay native to the guest: Debian
+architecture qualifiers are supported, and ordinary Fedora names may contain
+uppercase letters and underscores. Options, paths, URLs, globs, and dependency
+expressions are rejected. Comments and multiline setup blocks are supported.
 
 The effective defaults are:
 

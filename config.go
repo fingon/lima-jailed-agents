@@ -37,7 +37,7 @@ const (
 
 var (
 	environmentNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-	packageNamePattern     = regexp.MustCompile(`^[a-z0-9][a-z0-9+.-]*(?::[a-z0-9][a-z0-9-]*)?$`)
+	packageNamePattern     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9+._-]*(?::[a-z0-9][a-z0-9-]*)?$`)
 )
 
 type SetupCommand struct {
