@@ -52,7 +52,7 @@ below.
   including Fedora's unversioned executable providers. Record tested Lima and
   guest versions. Live validation requires access to Lima's host state;
   the planning session could not access `~/.lima` through its nono sandbox.
-- [ ] At implementation time, update README examples and support claims and
+- [x] At implementation time, update README examples and support claims and
   promote the planned DESIGN.md section to current behavior, replacing the
   superseded creation and provisioning descriptions. Enable the prek hook,
   run `make lint`, `make test`, and `make build`, and review the final diff.
