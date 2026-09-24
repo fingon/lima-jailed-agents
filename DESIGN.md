@@ -256,6 +256,9 @@ The effective defaults are:
 
 ```yaml
 gpg_forwarding: false
+github:
+  enabled: false
+  token_command: []
 lima: {}
 packages:
   - git
@@ -303,6 +306,14 @@ environment values merge by name. Setup commands and passthrough names append
 unless the project disables inheritance. Each setup entry records its source
 and one-based command index for failure reporting. YAML comments and literal
 block strings are accepted; each block remains one setup entry.
+
+The `github` mapping contains `enabled` and the global-only `token_command`
+argument vector. Project files may override `enabled` but may not define
+`token_command`, including an empty vector. While GitHub support is enabled,
+`GH_TOKEN` and `GITHUB_TOKEN` cannot be configured through `env` or
+`env_passthrough`; disabled support preserves the existing manual environment
+behavior. Credential resolution and guest Git integration remain described in
+the planned GitHub section below.
 
 Caller environment values are read only when an operation needs to prepare a
 VM. A passthrough name must exist, while an explicit `env` value takes
@@ -555,7 +566,8 @@ complete a partial transfer. The host configuration is never modified.
 
 ## Planned: GitHub authentication
 
-This section describes future behavior, not implemented support. The tasks in
+This section describes managed authentication behavior that is not yet
+implemented. The configuration shape and validation are current; the tasks in
 [TODO.md](TODO.md#github-authentication) cover implementation. Existing manual
 environment passthrough, package configuration, and setup remain available.
 Managed support initially targets `github.com`; Enterprise hosts, SSH-agent

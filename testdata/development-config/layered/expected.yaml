@@ -1,4 +1,12 @@
 gpg_forwarding: false
+github:
+  enabled: false
+  token_command:
+    - gh
+    - auth
+    - token
+    - --hostname
+    - github.com
 lima: {}
 packages:
   - ninja-build

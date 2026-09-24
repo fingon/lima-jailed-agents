@@ -8,6 +8,14 @@ agents:
   - claude
   - codex
 copy_git_config: true
+github:
+  enabled: true
+  token_command:
+    - gh
+    - auth
+    - token
+    - --hostname
+    - github.com
 env:
   BUILD_MODE: global
   BUILD_COUNT: "2"

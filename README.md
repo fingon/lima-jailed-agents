@@ -219,6 +219,9 @@ The effective defaults are:
 
 ```yaml
 gpg_forwarding: false
+github:
+  enabled: false
+  token_command: []
 lima: {}
 packages:
   - git

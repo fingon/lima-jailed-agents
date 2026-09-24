@@ -67,7 +67,7 @@ This feature is not implemented. Native dependency installation builds on the
 Fedora/native-package work above; README support claims remain unchanged until
 implementation.
 
-- [ ] Add `github.enabled` (default false) and `github.token_command` (default
+- [x] Add `github.enabled` (default false) and `github.token_command` (default
   empty argument vector) to configuration types, validation, cloning, merging,
   and deterministic output. Allow project overrides of `enabled`, but reject
   `token_command` in project files even when disabled or empty. Reject competing

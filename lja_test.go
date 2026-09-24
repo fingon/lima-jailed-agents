@@ -151,6 +151,61 @@ inherit_env_passthrough: true
 	assert.Equal(t, decoded.HasSetup, false)
 }
 
+func TestGitHubConfigurationLayeringAndClone(t *testing.T) {
+	root := t.TempDir()
+	project := filepath.Join(root, "project")
+	configHome := filepath.Join(root, "config")
+	assert.NilError(t, os.Mkdir(project, 0o755))
+	globalPath := filepath.Join(configHome, "lja", globalConfigName)
+	assert.NilError(t, os.MkdirAll(filepath.Dir(globalPath), 0o755))
+	assert.NilError(t, os.WriteFile(globalPath, []byte("github:\n  enabled: true\n  token_command: [gh, auth, token]\n"), 0o600))
+	assert.NilError(t, os.WriteFile(filepath.Join(project, projectConfigName), []byte("github:\n  enabled: false\n"), 0o600))
+
+	config, err := loadDevelopmentConfig(project, map[string]string{xdgConfigHomeEnv: configHome}, root)
+	assert.NilError(t, err)
+	assert.Equal(t, config.GitHub.Enabled, false)
+	assert.DeepEqual(t, config.GitHub.TokenCommand, []string{"gh", "auth", "token"})
+
+	cloned := config.clone()
+	cloned.GitHub.TokenCommand[0] = "changed"
+	assert.Equal(t, config.GitHub.TokenCommand[0], "gh")
+	assert.DeepEqual(t, config.AsYAML().GitHub.TokenCommand, []string{"gh", "auth", "token"})
+}
+
+func TestGitHubConfigurationValidation(t *testing.T) {
+	tests := []struct {
+		name      string
+		content   string
+		isProject bool
+		wantError string
+	}{
+		{name: "empty global mapping", content: "github: {}\n"},
+		{name: "global command", content: "github:\n  enabled: true\n  token_command: [gh, auth, token]\n"},
+		{name: "project enabled", content: "github:\n  enabled: true\n", isProject: true},
+		{name: "project empty command", content: "github:\n  token_command: []\n", isProject: true, wantError: "only allowed in global configuration"},
+		{name: "project command", content: "github:\n  token_command: [gh]\n", isProject: true, wantError: "only allowed in global configuration"},
+		{name: "unknown setting", content: "github:\n  host: github.com\n", wantError: "unknown github settings"},
+		{name: "null mapping", content: "github: null\n", wantError: "github must not be null"},
+		{name: "invalid enabled type", content: "github:\n  enabled: \"true\"\n", wantError: "github.enabled must be a boolean"},
+		{name: "invalid command type", content: "github:\n  token_command: gh\n", wantError: "github.token_command must be an array"},
+		{name: "empty command argument", content: "github:\n  token_command: [\"\"]\n", wantError: "github.token_command must be an array of nonempty strings"},
+		{name: "explicit token environment", content: "github:\n  enabled: true\nenv:\n  GH_TOKEN: value\n", wantError: "GH_TOKEN cannot be configured"},
+		{name: "fallback token environment", content: "github:\n  enabled: true\nenv:\n  GITHUB_TOKEN: value\n", wantError: "GITHUB_TOKEN cannot be configured"},
+		{name: "token passthrough", content: "github:\n  enabled: true\nenv_passthrough: [GH_TOKEN]\n", wantError: "GH_TOKEN cannot be passed through"},
+		{name: "disabled manual environment", content: "github:\n  enabled: false\nenv:\n  GH_TOKEN: value\nenv_passthrough: [GITHUB_TOKEN]\n"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidateDevelopmentConfig([]byte(test.content), test.isProject)
+			if test.wantError == "" {
+				assert.NilError(t, err)
+				return
+			}
+			assert.ErrorContains(t, err, test.wantError)
+		})
+	}
+}
+
 func TestDevelopmentConfigurationRejectsInvalidYAML(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -263,7 +318,7 @@ func TestDevelopmentConfigurationYAMLOutputIsDeterministic(t *testing.T) {
 		EnvPassthrough: []string{"TOKEN"},
 		Setup:          []SetupCommand{{Source: "/private/source.yaml", Index: 7, Command: "make dep\nmake build\n"}},
 	}
-	want := "gpg_forwarding: false\nlima: {}\npackages:\n  - make\n  - git\nagents:\n  - claude\ncopy_git_config: false\nenv:\n  A_FIRST: first\n  Z_LAST: last\nenv_passthrough:\n  - TOKEN\nsetup:\n  - |\n    make dep\n    make build\n"
+	want := "gpg_forwarding: false\ngithub:\n  enabled: false\n  token_command: []\nlima: {}\npackages:\n  - make\n  - git\nagents:\n  - claude\ncopy_git_config: false\nenv:\n  A_FIRST: first\n  Z_LAST: last\nenv_passthrough:\n  - TOKEN\nsetup:\n  - |\n    make dep\n    make build\n"
 	encoded, err := yamlConfiguration(config)
 	assert.NilError(t, err)
 	assert.Equal(t, string(encoded), want)
@@ -288,6 +343,7 @@ func TestDevelopmentConfigurationFixtures(t *testing.T) {
 		globalFixture     string
 		projectFixture    string
 		expectedFixture   string
+		wantGitHubCommand []string
 		wantPackages      []string
 		wantAgents        []string
 		wantCopyGitConfig bool
@@ -337,6 +393,7 @@ func TestDevelopmentConfigurationFixtures(t *testing.T) {
 			globalFixture:     "layered/global.yaml",
 			projectFixture:    "layered/project.yaml",
 			expectedFixture:   "layered/expected.yaml",
+			wantGitHubCommand: []string{"gh", "auth", "token", "--hostname", "github.com"},
 			wantPackages:      []string{"ninja-build"},
 			wantAgents:        []string{openCodeAgentName},
 			wantCopyGitConfig: false,
@@ -385,6 +442,8 @@ func TestDevelopmentConfigurationFixtures(t *testing.T) {
 			assert.NilError(t, err)
 			assert.DeepEqual(t, config.Packages, test.wantPackages)
 			assert.DeepEqual(t, config.Agents, test.wantAgents)
+			assert.Equal(t, config.GitHub.Enabled, false)
+			assert.DeepEqual(t, config.GitHub.TokenCommand, append([]string{}, test.wantGitHubCommand...))
 			assert.Equal(t, config.CopyGitConfig, test.wantCopyGitConfig)
 			assert.DeepEqual(t, config.Env, test.wantEnvironment)
 			assert.DeepEqual(t, config.EnvPassthrough, test.wantPassthrough)

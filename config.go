@@ -17,6 +17,9 @@ import (
 
 const (
 	configGPGForwarding                 = "gpg_forwarding"
+	configGitHub                        = "github"
+	configGitHubEnabled                 = "enabled"
+	configGitHubTokenCommand            = "token_command"
 	configLima                          = "lima"
 	configPackages                      = "packages"
 	configAgents                        = "agents"
@@ -26,6 +29,8 @@ const (
 	configSetup                         = "setup"
 	configInheritSetup                  = "inherit_setup"
 	configInheritEnvironmentPassthrough = "inherit_env_passthrough"
+	githubTokenEnvironment              = "GH_TOKEN"
+	githubFallbackTokenEnvironment      = "GITHUB_TOKEN"
 	makeCommand                         = "make"
 	packageInstalledStatus              = "install ok installed"
 	yamlBoolTag                         = "!!bool"
@@ -46,8 +51,14 @@ type SetupCommand struct {
 	Command string
 }
 
+type GitHubConfig struct {
+	Enabled      bool     `yaml:"enabled"`
+	TokenCommand []string `yaml:"token_command"`
+}
+
 type DevelopmentConfig struct {
 	GPGForwarding  bool
+	GitHub         GitHubConfig
 	Lima           map[string]any
 	Packages       []string
 	Agents         []string
@@ -59,6 +70,7 @@ type DevelopmentConfig struct {
 
 type developmentConfigYAML struct {
 	GPGForwarding  bool              `yaml:"gpg_forwarding"`
+	GitHub         GitHubConfig      `yaml:"github"`
 	Lima           map[string]any    `yaml:"lima"`
 	Packages       []string          `yaml:"packages"`
 	Agents         []string          `yaml:"agents"`
@@ -70,6 +82,7 @@ type developmentConfigYAML struct {
 
 func DefaultDevelopmentConfig() DevelopmentConfig {
 	return DevelopmentConfig{
+		GitHub:         GitHubConfig{TokenCommand: []string{}},
 		Lima:           make(map[string]any),
 		Packages:       []string{gitCommand, makeCommand},
 		Agents:         []string{},
@@ -83,6 +96,7 @@ func DefaultDevelopmentConfig() DevelopmentConfig {
 func (config DevelopmentConfig) clone() DevelopmentConfig {
 	cloned := DevelopmentConfig{
 		GPGForwarding:  config.GPGForwarding,
+		GitHub:         config.GitHub.clone(),
 		Lima:           mergeLimaConfig(nil, config.Lima),
 		Packages:       append([]string{}, config.Packages...),
 		Agents:         append([]string{}, config.Agents...),
@@ -110,6 +124,7 @@ func (config DevelopmentConfig) AsYAML() developmentConfigYAML {
 	}
 	return developmentConfigYAML{
 		GPGForwarding:  config.GPGForwarding,
+		GitHub:         config.GitHub.clone(),
 		Lima:           mergeLimaConfig(nil, config.Lima),
 		Packages:       packages,
 		Agents:         append([]string{}, config.Agents...),
@@ -121,7 +136,7 @@ func (config DevelopmentConfig) AsYAML() developmentConfigYAML {
 }
 
 func (config DevelopmentConfig) ResolveEnvironment(environment map[string]string) (map[string]string, error) {
-	if err := config.validateGPGEnvironment(nil); err != nil {
+	if err := config.validateEnvironmentConfiguration(); err != nil {
 		return nil, err
 	}
 	resolved := make(map[string]string, len(config.Env)+len(config.EnvPassthrough))
@@ -149,9 +164,17 @@ func (config DevelopmentConfig) ResolveEnvironment(environment map[string]string
 	return resolved, nil
 }
 
+func (config GitHubConfig) clone() GitHubConfig {
+	return GitHubConfig{
+		Enabled:      config.Enabled,
+		TokenCommand: append([]string{}, config.TokenCommand...),
+	}
+}
+
 type sourceDevelopmentConfig struct {
 	GPGForwarding                    bool
 	HasGPGForwarding                 bool
+	GitHub                           sourceGitHubConfig
 	Lima                             map[string]any
 	Packages                         []string
 	HasPackages                      bool
@@ -169,6 +192,13 @@ type sourceDevelopmentConfig struct {
 	HasInheritSetup                  bool
 	InheritEnvironmentPassthrough    bool
 	HasInheritEnvironmentPassthrough bool
+}
+
+type sourceGitHubConfig struct {
+	Enabled         bool
+	HasEnabled      bool
+	TokenCommand    []string
+	HasTokenCommand bool
 }
 
 func configNodeError(node *yaml.Node, format string, arguments ...any) error {
@@ -264,6 +294,53 @@ func decodeConfigBool(node *yaml.Node, name string) (bool, error) {
 	return value, nil
 }
 
+func decodeGitHubConfig(node *yaml.Node, isProject bool) (sourceGitHubConfig, error) {
+	entries, err := configMapping(node, configGitHub)
+	if err != nil {
+		return sourceGitHubConfig{}, err
+	}
+	allowed := map[string]bool{
+		configGitHubEnabled:      true,
+		configGitHubTokenCommand: true,
+	}
+	unknown := make([]string, 0)
+	var unknownNode *yaml.Node
+	values := make(map[string]*yaml.Node, len(entries))
+	for _, entry := range entries {
+		name := entry[0].Value
+		if isProject && name == configGitHubTokenCommand {
+			return sourceGitHubConfig{}, configNodeError(entry[0], "github.%s is only allowed in global configuration", configGitHubTokenCommand)
+		}
+		values[name] = entry[1]
+		if !allowed[name] {
+			unknown = append(unknown, name)
+			if unknownNode == nil {
+				unknownNode = entry[0]
+			}
+		}
+	}
+	if len(unknown) != 0 {
+		sort.Strings(unknown)
+		return sourceGitHubConfig{}, configNodeError(unknownNode, "unknown github settings: %s", strings.Join(unknown, ", "))
+	}
+	decoded := sourceGitHubConfig{}
+	if value, present := values[configGitHubEnabled]; present {
+		decoded.Enabled, err = decodeConfigBool(value, "github.enabled")
+		if err != nil {
+			return sourceGitHubConfig{}, err
+		}
+		decoded.HasEnabled = true
+	}
+	if value, present := values[configGitHubTokenCommand]; present {
+		decoded.TokenCommand, err = decodeConfigArray(value, "github.token_command")
+		if err != nil {
+			return sourceGitHubConfig{}, err
+		}
+		decoded.HasTokenCommand = true
+	}
+	return decoded, nil
+}
+
 func decodeConfigEnvironment(node *yaml.Node) (map[string]string, error) {
 	entries, err := configMapping(node, "env")
 	if err != nil {
@@ -341,7 +418,7 @@ func decodeDevelopmentConfig(content []byte, isProject bool) (sourceDevelopmentC
 		return sourceDevelopmentConfig{}, err
 	}
 	allowed := map[string]bool{
-		configGPGForwarding: true, configLima: true, configPackages: true, configAgents: true, configCopyGitConfig: true, configEnvironment: true,
+		configGPGForwarding: true, configGitHub: true, configLima: true, configPackages: true, configAgents: true, configCopyGitConfig: true, configEnvironment: true,
 		configEnvironmentPassthrough: true, configSetup: true,
 	}
 	if isProject {
@@ -403,6 +480,13 @@ func decodeDevelopmentConfig(content []byte, isProject bool) (sourceDevelopmentC
 			return sourceDevelopmentConfig{}, err
 		}
 		decoded.GPGForwarding, decoded.HasGPGForwarding = value, true
+	}
+	if node, present := values[configGitHub]; present {
+		github, err := decodeGitHubConfig(node, isProject)
+		if err != nil {
+			return sourceDevelopmentConfig{}, err
+		}
+		decoded.GitHub = github
 	}
 	if node, present := values[configCopyGitConfig]; present {
 		value, err := decodeConfigBool(node, configCopyGitConfig)
@@ -472,6 +556,12 @@ func applyDevelopmentConfig(config DevelopmentConfig, source sourceDevelopmentCo
 	if source.HasGPGForwarding {
 		config.GPGForwarding = source.GPGForwarding
 	}
+	if source.GitHub.HasEnabled {
+		config.GitHub.Enabled = source.GitHub.Enabled
+	}
+	if source.GitHub.HasTokenCommand {
+		config.GitHub.TokenCommand = append([]string{}, source.GitHub.TokenCommand...)
+	}
 	if source.HasPackages {
 		config.Packages = uniqueStrings(source.Packages)
 	}
@@ -499,6 +589,30 @@ func applyDevelopmentConfig(config DevelopmentConfig, source sourceDevelopmentCo
 		}
 	}
 	return config
+}
+
+func (config DevelopmentConfig) validateGitHubEnvironment() error {
+	if !config.GitHub.Enabled {
+		return nil
+	}
+	for _, name := range []string{githubTokenEnvironment, githubFallbackTokenEnvironment} {
+		if _, present := config.Env[name]; present {
+			return ljaError("%s cannot be configured in env when github.enabled is true", name)
+		}
+		for _, passthroughName := range config.EnvPassthrough {
+			if passthroughName == name {
+				return ljaError("%s cannot be passed through when github.enabled is true", name)
+			}
+		}
+	}
+	return nil
+}
+
+func (config DevelopmentConfig) validateEnvironmentConfiguration() error {
+	if err := config.validateGPGEnvironment(nil); err != nil {
+		return err
+	}
+	return config.validateGitHubEnvironment()
 }
 
 func LoadDevelopmentConfig(project string) (DevelopmentConfig, error) {
@@ -547,7 +661,7 @@ func loadDevelopmentConfig(project string, environment map[string]string, hostHo
 		}
 		config = applyDevelopmentConfig(config, decoded, source.path)
 	}
-	if err := config.validateGPGEnvironment(nil); err != nil {
+	if err := config.validateEnvironmentConfiguration(); err != nil {
 		return DevelopmentConfig{}, err
 	}
 	return config, nil
@@ -558,7 +672,7 @@ func ValidateDevelopmentConfig(content []byte, isProject bool) error {
 	if err != nil {
 		return err
 	}
-	return applyDevelopmentConfig(DefaultDevelopmentConfig(), source, "").validateGPGEnvironment(nil)
+	return applyDevelopmentConfig(DefaultDevelopmentConfig(), source, "").validateEnvironmentConfiguration()
 }
 
 func yamlConfiguration(config DevelopmentConfig) ([]byte, error) {

@@ -6,6 +6,8 @@ agents:
   - opencode
   - opencode
 copy_git_config: false
+github:
+  enabled: false
 env:
   BUILD_MODE: project
   PROJECT_ONLY: enabled

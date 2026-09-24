@@ -63,7 +63,7 @@ func TestLimaConfigurationMerging(t *testing.T) {
 	again, err := yamlConfiguration(merged.clone())
 	assert.NilError(t, err)
 	assert.Equal(t, string(encoded), string(again))
-	assert.Assert(t, strings.HasPrefix(string(encoded), "gpg_forwarding: false\nlima:\n  cpus: 4\n  dns: []\n  memory: 4GiB\n"))
+	assert.Assert(t, strings.HasPrefix(string(encoded), "gpg_forwarding: false\ngithub:\n  enabled: false\n  token_command: []\nlima:\n  cpus: 4\n  dns: []\n  memory: 4GiB\n"))
 }
 
 func TestLimaCreationInput(t *testing.T) {
