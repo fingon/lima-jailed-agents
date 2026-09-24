@@ -1,0 +1,3 @@
+lima:
+  cpus: 4
+  memory: 8GiB

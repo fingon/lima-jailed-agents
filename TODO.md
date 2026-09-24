@@ -33,7 +33,7 @@ below.
   provide runtime-version context and newer-template/custom-provisioning
   guidance on incompatibility. Preserve existing-agent reuse and do not
   uninstall pre-existing Snap runtimes or add third-party repositories.
-- [ ] Add table-driven tests with `gotest.tools/v3` and golden fixtures in
+- [x] Add table-driven tests with `gotest.tools/v3` and golden fixtures in
   `testdata/` for Fedora/default template input, inherited configuration,
   absent versus empty base/images, custom images, relative references,
   creation/recreation stdin transport, and exact mount arguments. Verify

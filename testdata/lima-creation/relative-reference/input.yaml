@@ -1,0 +1,2 @@
+lima:
+  base: ./templates/fedora.yaml

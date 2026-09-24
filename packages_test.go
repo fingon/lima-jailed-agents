@@ -150,7 +150,7 @@ func TestPackageNameValidation(t *testing.T) {
 	}
 }
 
-func TestFedoraPackagePreparationUsesCapabilitiesAndDNF(t *testing.T) {
+func TestExistingGuestUsesReportedDistributionForPreparation(t *testing.T) {
 	root := t.TempDir()
 	project := filepath.Join(root, "project")
 	assert.NilError(t, os.Mkdir(project, 0o755))
@@ -195,8 +195,12 @@ esac
 `
 	assert.NilError(t, os.WriteFile(commandPath, []byte(command), 0o755))
 
-	err := ensureGuestPackages(project, "fedora-vm", []string{"nodejs", "npm"}, commandPath)
+	backend, err := ensureDevelopmentPackages(project, "fedora-vm", DevelopmentConfig{
+		Lima:     map[string]any{limaBaseKey: "template:ubuntu"},
+		Packages: []string{"nodejs", "npm"},
+	}, commandPath)
 	assert.NilError(t, err)
+	assert.Equal(t, backend.name, fedoraPackageBackend)
 	_, err = os.Stat(statePath)
 	assert.NilError(t, err)
 	operations, err := os.ReadFile(logPath)

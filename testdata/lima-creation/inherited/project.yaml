@@ -1,0 +1,4 @@
+lima:
+  cpus: 4
+  ssh:
+    loadDotSSHPubKeys: false

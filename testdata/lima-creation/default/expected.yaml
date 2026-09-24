@@ -1,0 +1,3 @@
+base: template:default
+cpus: 4
+memory: 8GiB

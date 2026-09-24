@@ -1,0 +1,2 @@
+base: template:fedora
+cpus: 4

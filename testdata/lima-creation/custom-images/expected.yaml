@@ -1,0 +1,3 @@
+images:
+  - arch: aarch64
+    location: /images/custom.img

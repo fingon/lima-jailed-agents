@@ -1,0 +1,6 @@
+base: template:default
+cpus: 4
+memory: 4GiB
+ssh:
+  loadDotSSHPubKeys: false
+  localPort: 60022

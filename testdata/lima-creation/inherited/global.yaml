@@ -1,0 +1,7 @@
+lima:
+  base: template:default
+  cpus: 2
+  memory: 4GiB
+  ssh:
+    localPort: 60022
+    loadDotSSHPubKeys: true

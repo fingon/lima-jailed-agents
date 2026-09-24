@@ -44,6 +44,7 @@ type testVM struct {
 type vmDatabase struct {
 	VMs                      map[string]testVM
 	Operations               [][]string
+	CreateInputs             []string
 	CreateWorkingDirectories []string
 	Failed                   int
 	PackageInstallationDone  bool
@@ -198,6 +199,7 @@ func runVMProcess() error {
 			if err != nil {
 				return err
 			}
+			database.CreateInputs = append(database.CreateInputs, string(input))
 			if err := yaml.Unmarshal(input, &instance.Config); err != nil {
 				return err
 			}
@@ -530,6 +532,71 @@ func TestCreateVM(t *testing.T) {
 					"--mount-only", project + limaMountWritableSuffix, "-",
 				})
 			}
+		})
+	}
+}
+
+func TestCreationAndRecreationUseGoldenInputAndMountArguments(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		status      string
+		recreate    bool
+		input       string
+		expected    string
+		sharedState bool
+	}{
+		{
+			name:     "creation with Fedora template",
+			input:    "fedora/input.yaml",
+			expected: "fedora/expected.yaml",
+		},
+		{
+			name:        "recreation with relative template and shared state",
+			status:      limaStatusRunning,
+			recreate:    true,
+			input:       "relative-reference/input.yaml",
+			expected:    "relative-reference/expected.yaml",
+			sharedState: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			project, name, options := vmFixture(t, test.status)
+			if test.sharedState {
+				options.StateRoot = filepath.Join(filepath.Dir(project), "state")
+			}
+			source, err := decodeDevelopmentConfig(readLimaCreationFixture(t, test.input), true)
+			assert.NilError(t, err)
+			options.Development = &DevelopmentConfig{Lima: source.Lima}
+			options.Recreate = test.recreate
+
+			_, err = CreateVM(project, options)
+			assert.NilError(t, err)
+			database, err := readVMDatabase()
+			assert.NilError(t, err)
+			assert.Equal(t, len(database.CreateInputs), 1)
+			assert.Equal(t, database.CreateInputs[0], string(readLimaCreationFixture(t, test.expected)))
+			assert.DeepEqual(t, database.CreateWorkingDirectories, []string{project})
+
+			createOperations := make([][]string, 0, 1)
+			for _, operation := range database.Operations {
+				if len(operation) > 0 && operation[0] == createCommandName {
+					createOperations = append(createOperations, operation)
+				}
+			}
+			assert.Equal(t, len(createOperations), 1)
+			creationName := name
+			if test.recreate {
+				assert.Assert(t, strings.HasPrefix(createOperations[0][3], replacementNamePrefix))
+				creationName = createOperations[0][3]
+			}
+			mountPaths, err := ExpectedMountPaths(project, options.StateRoot)
+			assert.NilError(t, err)
+			mountArguments, err := MountArguments(mountPaths)
+			assert.NilError(t, err)
+			expectedOperation := []string{createCommandName, limaNoninteractiveFlag, "--name", creationName}
+			expectedOperation = append(expectedOperation, mountArguments...)
+			expectedOperation = append(expectedOperation, "-")
+			assert.DeepEqual(t, createOperations[0], expectedOperation)
 		})
 	}
 }

@@ -1,11 +1,22 @@
 package lja
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"gotest.tools/v3/assert"
 )
+
+const limaCreationFixtureDirectory = "testdata/lima-creation"
+
+func readLimaCreationFixture(t *testing.T, name string) []byte {
+	t.Helper()
+	content, err := os.ReadFile(filepath.Join(limaCreationFixtureDirectory, name))
+	assert.NilError(t, err)
+	return content
+}
 
 func TestLimaConfiguration(t *testing.T) {
 	for _, test := range []struct{ name, input, want string }{
@@ -81,4 +92,37 @@ func TestLimaCreationInput(t *testing.T) {
 	}
 	_, err := limaCreationInput(map[string]any{limaMountsKey: []any{}})
 	assert.ErrorContains(t, err, "managed by LJA")
+}
+
+func TestLimaCreationInputPreservesGoldenFixtures(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		global   string
+		project  string
+		expected string
+	}{
+		{name: "default template", project: "default/input.yaml", expected: "default/expected.yaml"},
+		{name: "Fedora template", project: "fedora/input.yaml", expected: "fedora/expected.yaml"},
+		{name: "empty base", project: "empty-base/input.yaml", expected: "empty-base/expected.yaml"},
+		{name: "empty images", project: "empty-images/input.yaml", expected: "empty-images/expected.yaml"},
+		{name: "custom images", project: "custom-images/input.yaml", expected: "custom-images/expected.yaml"},
+		{name: "relative reference", project: "relative-reference/input.yaml", expected: "relative-reference/expected.yaml"},
+		{name: "inherited configuration", global: "inherited/global.yaml", project: "inherited/project.yaml", expected: "inherited/expected.yaml"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			config := DefaultDevelopmentConfig()
+			if test.global != "" {
+				global, err := decodeDevelopmentConfig(readLimaCreationFixture(t, test.global), false)
+				assert.NilError(t, err)
+				config = applyDevelopmentConfig(config, global, "global")
+			}
+			project, err := decodeDevelopmentConfig(readLimaCreationFixture(t, test.project), true)
+			assert.NilError(t, err)
+			config = applyDevelopmentConfig(config, project, "project")
+
+			encoded, err := limaCreationInput(config.Lima)
+			assert.NilError(t, err)
+			assert.Equal(t, string(encoded), string(readLimaCreationFixture(t, test.expected)))
+		})
+	}
 }

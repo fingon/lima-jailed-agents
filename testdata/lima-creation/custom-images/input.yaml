@@ -1,0 +1,4 @@
+lima:
+  images:
+    - location: /images/custom.img
+      arch: aarch64
