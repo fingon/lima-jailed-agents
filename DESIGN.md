@@ -570,21 +570,18 @@ creates private parents, rejects symlinks, and atomically replaces each file.
 Included files are published before the root `.gitconfig`, so a retry can
 complete a partial transfer. The host configuration is never modified.
 
-## Planned: GitHub authentication
+## GitHub authentication
 
-This section records the remaining managed GitHub integration behavior. The
-configuration shape, host token resolution, guest dependencies, token delivery,
-and invocation-scoped Git configuration are current. The tasks in
-[TODO.md](TODO.md#github-authentication) cover the remaining validation and
-documentation work.
-Existing manual environment passthrough, package configuration, and setup remain
+This section records the current managed GitHub integration behavior. Live
+disposable-VM coverage is recorded in [VALIDATION.md](VALIDATION.md). Existing
+manual environment passthrough, package configuration, and setup remain
 available.
 Managed support initially targets `github.com`; Enterprise hosts, SSH-agent
 forwarding, token minting, and automatic renewal are outside this feature.
 
 ### Configuration and token resolution
 
-The planned defaults are:
+The defaults are:
 
 ```yaml
 github:
@@ -678,19 +675,21 @@ invocation requires no persistent Git configuration cleanup.
 
 ### Token permissions and lifetime
 
-Document repository-scoped token permissions according to the desired work:
-Contents read for fetch and write for push, Pull requests for PR operations,
-and Issues when needed. Organization approval requirements still apply. Link
-to GitHub's [token permission reference](https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens)
-rather than assuming one token scope grants every GitHub CLI operation.
+For a fine-grained token selected for a private repository, grant `Metadata:
+read` and `Contents: read` for fetches, `Contents: write` for pushes, `Pull
+requests: write` for pull-request operations, and `Issues: write` for issue
+operations as needed. Repository selection and organization approval still
+apply. GitHub's [token permission reference](https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens)
+defines endpoint-specific requirements; no single permission grants every
+GitHub CLI operation.
 
-LJA must not write resolved tokens into configuration output, wrappers, logs,
+LJA does not write resolved tokens into configuration output, wrappers, logs,
 or credential files. The current Lima environment transport places values in
-process arguments; this design retains that transport and does not promise
-process-list secrecy. Guest commands receive a usable bearer token and can
-retain it. Ending LJA does not revoke the token or erase copies retained by
-guest processes. Unlike GPG forwarding, this is credential delivery rather than
-an invocation-limited connection to a host credential service.
+process arguments, so process-list secrecy is not promised. Guest commands
+receive a usable bearer token and can retain it. Ending LJA does not revoke the
+token or erase copies retained by guest processes. Unlike GPG forwarding, this
+is credential delivery rather than an invocation-limited connection to a host
+credential service.
 
 ## GPG forwarding
 

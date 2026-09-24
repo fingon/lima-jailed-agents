@@ -194,7 +194,7 @@ copy_git_config: true
 env:
   BUILD_MODE: development
   BUILD_COUNT: "3"
-env_passthrough: [HTTPS_PROXY, GH_TOKEN]
+env_passthrough: [HTTPS_PROXY]
 setup:
   - |
     sh ./scripts/dev-setup.sh
@@ -270,6 +270,63 @@ variables cannot be overridden by development configuration.
 By default Git and Make are prepared in the guest. `copy_git_config` is enabled
 by default and can be disabled independently of the package list. Removing a
 package from configuration does not uninstall it from an existing VM.
+
+## GitHub authentication
+
+Managed GitHub support is opt-in and currently targets `github.com`. Enable it
+in the project file:
+
+```yaml
+github:
+  enabled: true
+```
+
+Supply a token through the host environment or a global token command. LJA
+uses the first nonempty source in this order: `GH_TOKEN`, `GITHUB_TOKEN`, then
+the command in `${XDG_CONFIG_HOME:-~/.config}/lja/config.yaml`:
+
+```sh
+GH_TOKEN="$MY_GITHUB_TOKEN" lja --project ~/src/example codex
+```
+
+```yaml
+github:
+  token_command: [gh, auth, token, --hostname, github.com]
+```
+
+The command is global-only, runs directly from the host home directory with no
+shell expansion and closed stdin, and has a 30-second timeout. Project files
+may override only `github.enabled`; managed support does not need a
+`GH_TOKEN` entry in `env_passthrough`. Configuring either token name in
+`env` or `env_passthrough` is rejected while support is enabled.
+
+Enabled support installs native guest `git` and `gh` even when `packages` is
+empty. Setup, shell, make, and agent commands—including their subprocesses—
+receive `GH_TOKEN`; package-manager and agent-install commands do not. Existing
+`git@github.com:` and `ssh://git@github.com/` remotes use HTTPS credentials
+for that invocation only. LJA does not run persistent GitHub login commands,
+edit shared remotes, copy credential stores, or put tokens in Git URLs.
+
+For a fine-grained token, select each target repository and grant only the
+permissions needed by the work:
+
+| Work | Repository permission |
+| --- | --- |
+| Private fetch and repository metadata | `Metadata: read`, `Contents: read` |
+| Push commits | `Contents: write` |
+| Create or update pull requests | `Pull requests: write` |
+| Create or update issues | `Issues: write` |
+
+Organization approval may also be required. See GitHub's [fine-grained token
+permission reference](https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens)
+for endpoint-specific requirements.
+
+LJA keeps the resolved token only for the current invocation, does not renew or
+revoke it, and does not promise process-list secrecy: Lima's environment
+transport can expose it through process arguments, while guest commands and
+their children can read or retain it. Do not put tokens in YAML, URLs, wrappers,
+logs, or credential files. Enterprise hosts, SSH-agent forwarding, token
+minting, and automatic renewal are outside the current support.
 
 ## GPG access
 

@@ -61,8 +61,8 @@ below.
 
 ## GitHub authentication
 
-The target behavior is described in
-[Planned: GitHub authentication](DESIGN.md#planned-github-authentication).
+The current behavior is described in
+[GitHub authentication](DESIGN.md#github-authentication).
 Host configuration, token resolution, guest dependencies, token delivery, and
 invocation-scoped Git runtime configuration are implemented. Live
 disposable-VM validation is recorded below; README support claims remain
@@ -115,7 +115,7 @@ unchanged until the documentation item is complete.
   and agent subprocesses, SSH-to-HTTPS rewriting, disabled support, and
   concurrent sessions. Verify insufficient permissions and expired tokens
   produce useful failures. Keep token values out of recorded validation output.
-- [ ] At implementation time, update README with environment and global token
+- [x] At implementation time, update README with environment and global token
   command examples, required repository permissions, and token-lifetime and
   process-argument visibility limits. Promote the planned DESIGN.md section to
   current behavior. Enable prek and run `make lint`, `make test`, and
