@@ -81,3 +81,9 @@ guest temporary home and made its forwarded socket unavailable. After SIGKILL,
 a raw Lima probe reported no running guest agent for the killed session; the
 host had no matching GPG-forwarding SSH tunnel or `lja-gpg-*` proxy directory
 left behind.
+
+Recreation with forwarding enabled prepared a replacement VM, ran setup on the
+candidate, closed its GPG session before stopping and renaming VMs, and ran the
+selected command with a distinct fresh final-VM home. A deliberate setup
+failure removed the candidate without replacing the managed VM; the original
+VM remained running and accepted a subsequent GPG shell.

@@ -204,7 +204,7 @@ does not grant access to `~/.lima`.
 - [x] Interrupt and SIGKILL LJA with an active GPG connection. Confirm the host
   agent is unreachable through any surviving guest socket, then remove any
   orphan SSH processes and inert temporary directories from the killed run.
-- [ ] Recreate with forwarding enabled. Verify candidate forwarding closes
+- [x] Recreate with forwarding enabled. Verify candidate forwarding closes
   before stop/rename, setup runs once, and the selected command uses a fresh
   final-VM session. Exercise setup failure and restoration paths.
 - [ ] Disable forwarding for the next invocation and verify no host GPG process
