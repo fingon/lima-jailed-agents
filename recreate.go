@@ -22,6 +22,16 @@ func CreateVM(project string, options WorkflowOptions) (returnedInstance LimaIns
 		return LimaInstance{}, err
 	}
 	defer cleanup(&returnErr)
+	githubCleanup := func(*error) {}
+	defer func() { githubCleanup(&returnErr) }()
+	ensureGitHub := func() error {
+		cleanup, err := options.ownGitHubWorkflow()
+		if err != nil {
+			return err
+		}
+		githubCleanup = cleanup
+		return nil
+	}
 	canonicalProject, err := canonicalProjectPath(project)
 	if err != nil {
 		return LimaInstance{}, err
@@ -52,6 +62,9 @@ func CreateVM(project string, options WorkflowOptions) (returnedInstance LimaIns
 					result = *instance
 					return nil
 				}
+				if err := ensureGitHub(); err != nil {
+					return err
+				}
 				if instance.Status == limaStatusStopped {
 					slog.Info("starting VM", "vm", vmName)
 					startOptions := options.gpg.processOptions(options.limaCommand())
@@ -75,6 +88,9 @@ func CreateVM(project string, options WorkflowOptions) (returnedInstance LimaIns
 				result = *instance
 				return nil
 			}
+		}
+		if err := ensureGitHub(); err != nil {
+			return err
 		}
 		if options.Environment == nil {
 			config := developmentConfigOrDefault(options.Development)

@@ -63,9 +63,9 @@ below.
 
 The target behavior is described in
 [Planned: GitHub authentication](DESIGN.md#planned-github-authentication).
-This feature is not implemented. Native dependency installation builds on the
-Fedora/native-package work above; README support claims remain unchanged until
-implementation.
+Guest integration for this feature is not implemented. Native dependency
+installation builds on the Fedora/native-package work above; README support
+claims remain unchanged until the feature is complete.
 
 - [x] Add `github.enabled` (default false) and `github.token_command` (default
   empty argument vector) to configuration types, validation, cloning, merging,
@@ -74,7 +74,7 @@ implementation.
   `GH_TOKEN`/`GITHUB_TOKEN` settings in `env` or `env_passthrough` when enabled.
   Preserve manual behavior when disabled and never resolve tokens for config
   inspection, lifecycle-only commands, or existing-VM no-op creation.
-- [ ] Resolve nonempty host `GH_TOKEN`, then `GITHUB_TOKEN`, then the explicitly
+- [x] Resolve nonempty host `GH_TOKEN`, then `GITHUB_TOKEN`, then the explicitly
   configured host command. Execute the argument vector without a shell from
   host home, with closed stdin, cancellation, and a 30-second timeout. Validate
   single-line tokens, allowing a trailing LF/CRLF from command output; reject

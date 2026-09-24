@@ -102,10 +102,13 @@ func NormalizeAgentNames(selected string, additional []string) ([]string, error)
 
 type WorkflowOptions struct {
 	gpg                   *gpgWorkflow
+	github                *githubWorkflow
 	Recreate              bool
 	StateRoot             string
 	Development           *DevelopmentConfig
 	Environment           map[string]string
+	hostEnvironment       map[string]string
+	hostHome              string
 	LimaCommand           string
 	LockDirectory         string
 	agentTrustDirectories []string
@@ -342,6 +345,11 @@ func PrepareVM(project string, options WorkflowOptions) (returnedInstance LimaIn
 		return LimaInstance{}, err
 	}
 	defer cleanup(&returnErr)
+	githubCleanup, err := options.ownGitHubWorkflow()
+	if err != nil {
+		return LimaInstance{}, err
+	}
+	defer githubCleanup(&returnErr)
 
 	canonicalProject, err := canonicalProjectPath(project)
 	if err != nil {
@@ -375,6 +383,11 @@ func InstallAgent(project string, agentName string, update bool, options Workflo
 		return LimaInstance{}, err
 	}
 	defer cleanup(&returnErr)
+	githubCleanup, err := options.ownGitHubWorkflow()
+	if err != nil {
+		return LimaInstance{}, err
+	}
+	defer githubCleanup(&returnErr)
 
 	canonicalProject, err := canonicalProjectPath(project)
 	if err != nil {
@@ -649,6 +662,11 @@ func prepareAgents(project string, selectedAgent string, withAgents []string, tr
 		return LimaInstance{}, err
 	}
 	defer cleanup(&returnErr)
+	githubCleanup, err := options.ownGitHubWorkflow()
+	if err != nil {
+		return LimaInstance{}, err
+	}
+	defer githubCleanup(&returnErr)
 
 	canonicalProject, err := canonicalProjectPath(project)
 	if err != nil {
@@ -749,6 +767,11 @@ func RunAgent(project string, agentName string, arguments []string, withAgents [
 		return 0, err
 	}
 	defer cleanup(&returnErr)
+	githubCleanup, err := options.ownGitHubWorkflow()
+	if err != nil {
+		return 0, err
+	}
+	defer githubCleanup(&returnErr)
 
 	canonicalProject, err := canonicalProjectPath(project)
 	if err != nil {
@@ -850,6 +873,11 @@ func OpenShell(project string, arguments []string, workingDirectory string, opti
 		return 0, err
 	}
 	defer cleanup(&returnErr)
+	githubCleanup, err := options.ownGitHubWorkflow()
+	if err != nil {
+		return 0, err
+	}
+	defer githubCleanup(&returnErr)
 
 	canonicalProject, err := canonicalProjectPath(project)
 	if err != nil {

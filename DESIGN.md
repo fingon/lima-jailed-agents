@@ -312,8 +312,13 @@ argument vector. Project files may override `enabled` but may not define
 `token_command`, including an empty vector. While GitHub support is enabled,
 `GH_TOKEN` and `GITHUB_TOKEN` cannot be configured through `env` or
 `env_passthrough`; disabled support preserves the existing manual environment
-behavior. Credential resolution and guest Git integration remain described in
-the planned GitHub section below.
+behavior. Enabled work workflows resolve a nonempty host `GH_TOKEN`, then
+`GITHUB_TOKEN`, then the global `token_command`, executing the argument vector
+from host home with a 30-second timeout. Tokens are validated as one line
+without control characters, retained only in the invocation, and reused during
+recreation. Configuration inspection, lifecycle-only commands, and an existing
+VM no-op create do not resolve credentials. Guest token delivery and Git
+integration remain described in the planned GitHub section below.
 
 Caller environment values are read only when an operation needs to prepare a
 VM. A passthrough name must exist, while an explicit `env` value takes
@@ -566,9 +571,9 @@ complete a partial transfer. The host configuration is never modified.
 
 ## Planned: GitHub authentication
 
-This section describes managed authentication behavior that is not yet
-implemented. The configuration shape and validation are current; the tasks in
-[TODO.md](TODO.md#github-authentication) cover implementation. Existing manual
+This section describes managed guest integration behavior that is not yet
+implemented. The configuration shape and host token resolution are current; the
+tasks in [TODO.md](TODO.md#github-authentication) cover implementation. Existing manual
 environment passthrough, package configuration, and setup remain available.
 Managed support initially targets `github.com`; Enterprise hosts, SSH-agent
 forwarding, token minting, and automatic renewal are outside this feature.

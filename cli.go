@@ -156,7 +156,7 @@ func runCommand(cli *CLI, command string, project string, workingDirectory strin
 		return 0, nil
 	}
 	if command == createCommandName {
-		instance, err := CreateVM(project, WorkflowOptions{StateRoot: stateRoot, Development: &development, LimaCommand: limaCtlCommand, Recreate: cli.Recreate})
+		instance, err := CreateVM(project, WorkflowOptions{StateRoot: stateRoot, Development: &development, hostEnvironment: environment, LimaCommand: limaCtlCommand, Recreate: cli.Recreate})
 		if err != nil {
 			return 0, err
 		}
@@ -170,11 +170,12 @@ func runCommand(cli *CLI, command string, project string, workingDirectory strin
 		return 0, err
 	}
 	workflowOptions := WorkflowOptions{
-		Recreate:    cli.Recreate,
-		StateRoot:   stateRoot,
-		Development: &development,
-		Environment: resolvedEnvironment,
-		LimaCommand: limaCtlCommand,
+		Recreate:        cli.Recreate,
+		StateRoot:       stateRoot,
+		Development:     &development,
+		Environment:     resolvedEnvironment,
+		hostEnvironment: environment,
+		LimaCommand:     limaCtlCommand,
 	}
 	switch command {
 	case "shell":
