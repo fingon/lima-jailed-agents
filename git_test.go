@@ -2,7 +2,9 @@ package lja
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -131,4 +133,57 @@ func TestGitHubGitConfigRewriteConflicts(t *testing.T) {
 			assert.Assert(t, !strings.Contains(err.Error(), "token"))
 		})
 	}
+}
+
+func runGitWithGitHubEnvironment(t *testing.T, arguments ...string) string {
+	t.Helper()
+	environment, err := githubGitEnvironment(nil)
+	assert.NilError(t, err)
+	command := exec.Command(gitCommand, arguments...)
+	commandEnvironment := make([]string, 0, len(os.Environ())+len(environment))
+	for _, value := range os.Environ() {
+		if !strings.HasPrefix(value, gitConfigCountEnv+"=") && !strings.HasPrefix(value, gitConfigKeyEnvPrefix) && !strings.HasPrefix(value, gitConfigValueEnvPrefix) {
+			commandEnvironment = append(commandEnvironment, value)
+		}
+	}
+	names := make([]string, 0, len(environment))
+	for name := range environment {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		commandEnvironment = append(commandEnvironment, name+"="+environment[name])
+	}
+	command.Env = commandEnvironment
+	output, err := command.Output()
+	assert.NilError(t, err)
+	return strings.TrimSpace(string(output))
+}
+
+func TestGitHubGitRewritesFetchPushAndLeavesOtherHosts(t *testing.T) {
+	repository := t.TempDir()
+	command := exec.Command(gitCommand, "-C", repository, "init", "--quiet")
+	assert.NilError(t, command.Run())
+	assert.NilError(t, exec.Command(gitCommand, "-C", repository, "remote", "add", "origin", "git@github.com:owner/repo").Run())
+	for _, test := range []struct {
+		name      string
+		remote    string
+		rewritten string
+	}{
+		{name: "scp SSH", remote: "git@github.com:owner/repo", rewritten: "https://github.com/owner/repo"},
+		{name: "URL SSH", remote: "ssh://git@github.com/owner/repo", rewritten: "https://github.com/owner/repo"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert.NilError(t, exec.Command(gitCommand, "-C", repository, "remote", "set-url", "origin", test.remote).Run())
+			assert.Equal(t, runGitWithGitHubEnvironment(t, "-C", repository, "remote", "get-url", "origin"), test.rewritten)
+			assert.Equal(t, runGitWithGitHubEnvironment(t, "-C", repository, "remote", "get-url", "--push", "origin"), test.rewritten)
+			remoteContent, err := os.ReadFile(filepath.Join(repository, ".git", "config"))
+			assert.NilError(t, err)
+			assert.Assert(t, strings.Contains(string(remoteContent), test.remote))
+		})
+	}
+	assert.NilError(t, exec.Command(gitCommand, "-C", repository, "remote", "remove", "origin").Run())
+	assert.NilError(t, exec.Command(gitCommand, "-C", repository, "remote", "add", "origin", "git@gitlab.com:owner/repo").Run())
+	assert.Equal(t, runGitWithGitHubEnvironment(t, "-C", repository, "remote", "get-url", "origin"), "git@gitlab.com:owner/repo")
+	assert.Equal(t, runGitWithGitHubEnvironment(t, "-C", repository, "remote", "get-url", "--push", "origin"), "git@gitlab.com:owner/repo")
 }

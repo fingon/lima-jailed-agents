@@ -103,7 +103,7 @@ remain unchanged until the feature is complete.
   empty/multiline output, failure, timeout, cancellation, and diagnostics that
   omit secrets from stdout and stderr. Verify read-only/no-op workflows do not
   execute token commands and configuration output never resolves tokens.
-- [ ] Test guest dependency installation, setup ordering, nested-agent
+- [x] Test guest dependency installation, setup ordering, nested-agent
   inheritance, concurrent invocations with different tokens, recreation, and
   re-resolution on the next invocation. Exercise HTTPS fetch/push and both
   supported SSH URL forms using isolated Git fixtures; cover conflicting host

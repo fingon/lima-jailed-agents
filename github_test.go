@@ -3,8 +3,10 @@ package lja
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -256,4 +258,55 @@ func TestGitHubAgentCommandForwardsToken(t *testing.T) {
 	assert.NilError(t, err)
 	lastOperation := database.Operations[len(database.Operations)-1]
 	assert.Assert(t, operationHasEnvironment(lastOperation, githubTokenEnvironment, "agent-token"))
+}
+
+func TestGitHubConcurrentInvocationsKeepTokensSeparate(t *testing.T) {
+	tokens := []string{"first-token", "second-token"}
+	results := make(chan string, len(tokens))
+	var waitGroup sync.WaitGroup
+	for _, token := range tokens {
+		token := token
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			workflow := &githubWorkflow{ctx: context.Background(), token: token}
+			environment, err := workflow.environment(map[string]string{"INVOCATION": token})
+			if err != nil {
+				results <- err.Error()
+				return
+			}
+			if environment[githubTokenEnvironment] != token || environment["INVOCATION"] != token {
+				results <- "token environment crossed invocation boundary"
+				return
+			}
+			results <- token
+		}()
+	}
+	waitGroup.Wait()
+	close(results)
+	seen := make(map[string]bool, len(tokens))
+	for result := range results {
+		assert.Assert(t, result == tokens[0] || result == tokens[1])
+		seen[result] = true
+	}
+	assert.Equal(t, len(seen), len(tokens))
+}
+
+func TestGitHubAgentWrapperInheritsToken(t *testing.T) {
+	root := t.TempDir()
+	marker := filepath.Join(root, "token")
+	agentPath := filepath.Join(root, "agent")
+	agentScript := "#!/bin/sh\nprintf '%s' \"$GH_TOKEN\" > " + shellQuote(marker) + "\n"
+	assert.NilError(t, os.WriteFile(agentPath, []byte(agentScript), 0o700))
+	content, err := AgentWrapperContent(root, codexAgentName, agentPath)
+	assert.NilError(t, err)
+	assert.Assert(t, !strings.Contains(content, "first-token"))
+	wrapperPath := filepath.Join(root, "wrapper")
+	assert.NilError(t, os.WriteFile(wrapperPath, []byte(content), 0o700))
+	command := exec.Command(wrapperPath)
+	command.Env = append(os.Environ(), githubTokenEnvironment+"=nested-token")
+	assert.NilError(t, command.Run())
+	value, err := os.ReadFile(marker)
+	assert.NilError(t, err)
+	assert.Equal(t, string(value), "nested-token")
 }
