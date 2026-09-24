@@ -82,12 +82,13 @@ type ProcessResult struct {
 }
 
 type processOptions struct {
-	context       context.Context
-	command       string
-	captureOutput bool
-	check         bool
-	inputData     []byte
-	hasInput      bool
+	context          context.Context
+	command          string
+	workingDirectory string
+	captureOutput    bool
+	check            bool
+	inputData        []byte
+	hasInput         bool
 }
 
 func defaultProcessOptions(command string, contexts ...context.Context) processOptions {
@@ -112,6 +113,9 @@ func runLima(arguments []string, options processOptions) (ProcessResult, error) 
 		ctx = context.Background()
 	}
 	cmd := exec.CommandContext(ctx, command, arguments...)
+	if options.workingDirectory != "" {
+		cmd.Dir = options.workingDirectory
+	}
 	if options.context != nil {
 		cmd.WaitDelay = processPipeWaitTimeout
 	}

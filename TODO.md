@@ -7,7 +7,7 @@ The target behavior is described in
 This feature is not implemented. Current runtime behavior and README support
 claims remain unchanged until implementation.
 
-- [ ] Replace Lima `--set` creation overrides with the effective native Lima
+- [x] Replace Lima `--set` creation overrides with the effective native Lima
   mapping serialized as YAML on stdin to `limactl create ... -`. Inject
   `base: template:default` only when both `base` and `images` are absent,
   without changing `lja config` output. Preserve global/project merging,

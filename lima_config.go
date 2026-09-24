@@ -1,14 +1,19 @@
 package lja
 
 import (
+	"bytes"
 	"encoding/json"
-	"sort"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
 )
 
-const limaMountsKey = "mounts"
+const (
+	limaMountsKey       = "mounts"
+	limaBaseKey         = "base"
+	limaImagesKey       = "images"
+	limaDefaultTemplate = "template:default"
+)
 
 func decodeLimaConfig(node *yaml.Node) (map[string]any, error) {
 	if _, err := configMapping(node, configLima); err != nil {
@@ -102,26 +107,24 @@ func mergeLimaConfig(base, override map[string]any) map[string]any {
 	return result
 }
 
-func limaOverrideArguments(config map[string]any) ([]string, error) {
+func limaCreationInput(config map[string]any) ([]byte, error) {
 	if _, present := config[limaMountsKey]; present {
 		return nil, ljaError("lima.mounts is managed by LJA")
 	}
-	keys := make([]string, 0, len(config))
-	for key := range config {
-		keys = append(keys, key)
+	creationConfig := mergeLimaConfig(nil, config)
+	_, hasBase := creationConfig[limaBaseKey]
+	_, hasImages := creationConfig[limaImagesKey]
+	if !hasBase && !hasImages {
+		creationConfig[limaBaseKey] = limaDefaultTemplate
 	}
-	sort.Strings(keys)
-	arguments := make([]string, 0, len(keys)*2)
-	for _, key := range keys {
-		encodedKey, err := json.Marshal(key)
-		if err != nil {
-			return nil, ljaError("cannot encode Lima setting name: %w", err)
-		}
-		value, err := json.Marshal(config[key])
-		if err != nil {
-			return nil, ljaError("cannot encode Lima setting %s: %w", key, err)
-		}
-		arguments = append(arguments, "--set", ".["+string(encodedKey)+"] = "+string(value))
+	var output bytes.Buffer
+	encoder := yaml.NewEncoder(&output)
+	encoder.SetIndent(2)
+	if err := encoder.Encode(creationConfig); err != nil {
+		return nil, ljaError("cannot encode Lima creation input: %w", err)
 	}
-	return arguments, nil
+	if err := encoder.Close(); err != nil {
+		return nil, ljaError("cannot close Lima creation input encoder: %w", err)
+	}
+	return output.Bytes(), nil
 }

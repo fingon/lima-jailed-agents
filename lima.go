@@ -330,13 +330,16 @@ func prepareNamedVMLocked(project string, vmName string, stateRoot string, devel
 			return LimaInstance{}, err
 		}
 		arguments := []string{"create", limaNoninteractiveFlag, "--name", vmName}
-		overrides, err := limaOverrideArguments(developmentConfigOrDefault(development).Lima)
+		creationInput, err := limaCreationInput(developmentConfigOrDefault(development).Lima)
 		if err != nil {
 			return LimaInstance{}, err
 		}
-		arguments = append(arguments, overrides...)
 		arguments = append(arguments, mountArguments...)
+		arguments = append(arguments, "-")
 		options := defaultProcessOptions(limactlCommand)
+		options.workingDirectory = project
+		options.hasInput = true
+		options.inputData = creationInput
 		if _, err := runLima(arguments, options); err != nil {
 			return LimaInstance{}, err
 		}

@@ -4,11 +4,13 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"go.yaml.in/yaml/v3"
 	"gotest.tools/v3/assert"
 )
 
@@ -38,10 +40,11 @@ type testVM struct {
 }
 
 type vmDatabase struct {
-	VMs                     map[string]testVM
-	Operations              [][]string
-	Failed                  int
-	PackageInstallationDone bool
+	VMs                      map[string]testVM
+	Operations               [][]string
+	CreateWorkingDirectories []string
+	Failed                   int
+	PackageInstallationDone  bool
 }
 
 func (database *vmDatabase) save() error {
@@ -175,6 +178,20 @@ func runVMProcess() error {
 		}
 	case "create":
 		instance := testVM{Status: limaStatusStopped, ID: testReplacementID, Config: map[string]any{}}
+		if arguments[len(arguments)-1] == "-" {
+			input, err := io.ReadAll(os.Stdin)
+			if err != nil {
+				return err
+			}
+			if err := yaml.Unmarshal(input, &instance.Config); err != nil {
+				return err
+			}
+			workingDirectory, err := os.Getwd()
+			if err != nil {
+				return err
+			}
+			database.CreateWorkingDirectories = append(database.CreateWorkingDirectories, workingDirectory)
+		}
 		for index := 1; index < len(arguments); index++ {
 			switch arguments[index] {
 			case "--name":
@@ -192,18 +209,6 @@ func runVMProcess() error {
 					mounts = append(mounts, testMount{Location: path, MountPoint: path, Writable: true})
 				}
 				instance.Config[limaMountsKey] = mounts
-			case "--set":
-				index++
-				parts := strings.SplitN(arguments[index], " = ", 2)
-				var key string
-				if err := json.Unmarshal([]byte(strings.TrimSuffix(strings.TrimPrefix(parts[0], ".["), "]")), &key); err != nil {
-					return err
-				}
-				var value any
-				if err := json.Unmarshal([]byte(parts[1]), &value); err != nil {
-					return err
-				}
-				instance.Config[key] = value
 			}
 		}
 		database.VMs[instance.Name] = instance
@@ -485,6 +490,12 @@ func TestCreateVM(t *testing.T) {
 				assert.Equal(t, database.VMs[name].SetupCount, 1)
 				assert.Equal(t, database.VMs[name].Config["cpus"], float64(4))
 				assert.Equal(t, database.VMs[name].Config["memory"], "8GiB")
+				assert.Equal(t, database.VMs[name].Config[limaBaseKey], limaDefaultTemplate)
+				assert.DeepEqual(t, database.CreateWorkingDirectories, []string{project})
+				assert.DeepEqual(t, database.Operations[0], []string{
+					createCommandName, limaNoninteractiveFlag, "--name", name,
+					"--mount-only", project + limaMountWritableSuffix, "-",
+				})
 			}
 		})
 	}

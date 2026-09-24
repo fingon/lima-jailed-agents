@@ -123,9 +123,8 @@ For project VM preparation the lifecycle is:
 3. Inspect the deterministic VM.
 4. If it exists, validate its effective mounts before changing state.
 5. Create the second state directory if shared mode needs it.
-6. Create an absent VM with `--tty=false`, the managed `--name`, native
-   configuration overrides encoded as `--set` arguments, and CSV-encoded
-   `--mount-only` paths.
+6. Create an absent VM with `--tty=false`, the managed `--name`, the effective
+   native Lima mapping as YAML on stdin, and CSV-encoded `--mount-only` paths.
 7. Start a stopped VM, rejecting all other states.
 8. Reinspect and revalidate mounts and the running state.
 9. Prepare development packages, Git, setup commands, and configured default
@@ -280,13 +279,15 @@ replace inherited values; empty mappings contribute no overrides to inherited
 mappings. Configuration cloning deep-copies mappings and lists. `lja config`
 includes the merged overrides, not a resolved Lima template.
 
-Creation sorts the top-level Lima keys and generates one `--set` assignment
-per key, using JSON encoding for the key and value and passing each expression
-as one process argument. A top-level mapping replaces that template field;
-Lima's defaults supply omitted settings. No shell evaluates configuration
-values. The managed VM name and exact mounts remain under LJA control, and
-effective mounts are checked before boot. Existing VMs are never edited to
-apply resource changes: explicit recreation is required.
+Creation passes the effective top-level Lima mapping as one YAML document on
+stdin to `limactl create ... -`; a missing `base` and `images` pair gets
+`base: template:default` in that creation-only document. Explicit empty values
+remain explicit, and the configured mapping and `lja config` output are not
+changed. Lima resolves relative template references from the project working
+directory and handles external template references itself. No shell evaluates
+configuration values. The managed VM name and exact mounts remain under LJA
+control, and effective mounts are checked before boot. Existing VMs are never
+edited to apply resource changes: explicit recreation is required.
 
 Example project overrides:
 

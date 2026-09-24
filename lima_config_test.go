@@ -1,7 +1,6 @@
 package lja
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 
@@ -56,16 +55,30 @@ func TestLimaConfigurationMerging(t *testing.T) {
 	assert.Assert(t, strings.HasPrefix(string(encoded), "gpg_forwarding: false\nlima:\n  cpus: 4\n  dns: []\n  memory: 4GiB\n"))
 }
 
-func TestLimaOverrideArguments(t *testing.T) {
+func TestLimaCreationInput(t *testing.T) {
 	const literal = "$(touch nope); \"quoted\"\nnext"
-	config := map[string]any{"cpus": 4, "memory": "8GiB", "param": map[string]any{"value": literal}}
-	arguments, err := limaOverrideArguments(config)
-	assert.NilError(t, err)
-	assert.Equal(t, len(arguments), 6)
-	assert.DeepEqual(t, arguments[:4], []string{"--set", ".[\"cpus\"] = 4", "--set", ".[\"memory\"] = \"8GiB\""})
-	var value map[string]any
-	assert.NilError(t, json.Unmarshal([]byte(strings.SplitN(arguments[5], " = ", 2)[1]), &value))
-	assert.Equal(t, value["value"], literal)
-	_, err = limaOverrideArguments(map[string]any{limaMountsKey: []any{}})
+	for _, test := range []struct {
+		name   string
+		config map[string]any
+		want   string
+	}{
+		{name: "default template", config: map[string]any{}, want: "base: template:default\n"},
+		{name: "native configuration", config: map[string]any{
+			"cpus":   4,
+			"memory": "8GiB",
+			"param":  map[string]any{"value": literal},
+		}, want: "base: template:default\ncpus: 4\nmemory: 8GiB\nparam:\n  value: |-\n    $(touch nope); \"quoted\"\n    next\n"},
+		{name: "explicit base", config: map[string]any{"base": ""}, want: "base: \"\"\n"},
+		{name: "explicit images", config: map[string]any{"images": []any{}}, want: "images: []\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			original := mergeLimaConfig(nil, test.config)
+			encoded, err := limaCreationInput(test.config)
+			assert.NilError(t, err)
+			assert.Equal(t, string(encoded), test.want)
+			assert.DeepEqual(t, test.config, original)
+		})
+	}
+	_, err := limaCreationInput(map[string]any{limaMountsKey: []any{}})
 	assert.ErrorContains(t, err, "managed by LJA")
 }
