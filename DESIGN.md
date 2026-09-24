@@ -319,13 +319,16 @@ filename constant is `.lja.yaml`.
 
 ## Guest preparation and agents
 
-Development packages are checked with `dpkg-query`. Missing effective packages
-(configured packages plus `git` when `copy_git_config` is enabled and
-`gnupg` when `gpg_forwarding` is enabled) are installed
-together in one guest `sh -eu -c` sequence:
-`sudo apt-get update && sudo apt-get install -y PACKAGE...`. Each package is
-checked again after the batch. Agent installation is independent of the
-configured development package list.
+When development packages are needed, LJA reads the guest `/etc/os-release`
+and selects the Ubuntu/Debian or Fedora backend. It verifies the selected
+backend's query, install, and `sudo` tools before checking dependencies. The
+Ubuntu/Debian backend uses `dpkg-query`, then batches missing packages through
+`sudo apt-get update && sudo apt-get install -y PACKAGE...`; the Fedora backend
+uses `rpm -q --whatprovides PACKAGE` and `sudo dnf install -y PACKAGE...`.
+Each missing dependency is checked again after installation. Unsupported guest
+distributions, missing tools, package-database failures, and guest connection
+failures are reported with backend, VM, and dependency context. Agent
+installation is independent of the configured development package list.
 
 The shared Node recipe is:
 

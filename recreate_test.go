@@ -225,6 +225,11 @@ func runVMProcess() error {
 	case "delete":
 		delete(database.VMs, name)
 	case "shell":
+		if len(guestArguments) == 2 && guestArguments[0] == catCommand && guestArguments[1] == osReleasePath {
+			if _, err := fmt.Fprintln(os.Stdout, "ID=ubuntu"); err != nil {
+				return err
+			}
+		}
 		if len(guestArguments) > 0 && guestArguments[0] == "dpkg-query" && database.PackageInstallationDone {
 			if _, err := fmt.Fprint(os.Stdout, packageInstalledStatus); err != nil {
 				return err
@@ -406,7 +411,7 @@ func TestPreparationReportsBatchPackageFailures(t *testing.T) {
 		noop    bool
 		want    string
 	}{
-		{name: "installation failure", failure: "package-install", want: "cannot prepare packages make, ninja-build"},
+		{name: "installation failure", failure: "package-install", want: "cannot install dependencies make, ninja-build with ubuntu/debian backend"},
 		{name: "verification failure", noop: true, want: "installation did not provide the requested package"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

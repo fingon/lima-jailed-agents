@@ -14,7 +14,7 @@ claims remain unchanged until implementation.
   resolve input-relative template paths from the project, and leave external
   template references to Lima. Preserve managed names, `--mount-only`, exact
   mount validation, and candidate preparation during recreation.
-- [ ] Add internal Ubuntu/Debian and Fedora package backends selected from
+- [x] Add internal Ubuntu/Debian and Fedora package backends selected from
   guest `/etc/os-release` when needed. Verify tools, reject unsupported guests,
   and use dpkg/APT or RPM/DNF respectively. Query RPM provided capabilities,
   batch missing dependencies per phase, and verify installation. Distinguish

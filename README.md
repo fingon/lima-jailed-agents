@@ -235,14 +235,18 @@ append to the global values unless a project sets `inherit_setup` or
 `inherit_env_passthrough` to `false`. Commands run from the project root in
 separate `sh -eu -c` guest processes and may use guest `sudo`. They run for
 `shell`, agent launches, `update`, and VM creation; they must be idempotent.
-Missing packages are checked individually and installed together in one guest
-apt transaction; `git` is included automatically when `copy_git_config` is
-enabled. Configured default agents are installed or reused during every
-preparation, including creation, shell, make, launches, and update. Shells and
-multi-agent launches expose configured agents through per-VM wrappers. An agent
-launch combines the selected agent, configured defaults, and any `--with-agent`
-values in stable deduplicated order. Recreation runs development setup once
-before promotion and prepares defaults on the replacement VM.
+When packages are needed, LJA selects an Ubuntu/Debian or Fedora backend from
+guest `/etc/os-release`, checks missing dependencies, installs them in one
+backend-specific batch, and verifies them again. Unsupported distributions,
+missing package tools, package-database failures, and connection failures are
+reported with context. `git` is included automatically when
+`copy_git_config` is enabled. Configured default agents are installed or
+reused during every preparation, including creation, shell, make, launches,
+and update. Shells and multi-agent launches expose configured agents through
+per-VM wrappers. An agent launch combines the selected agent, configured
+defaults, and any `--with-agent` values in stable deduplicated order.
+Recreation runs development setup once before promotion and prepares defaults
+on the replacement VM.
 
 Only explicitly named caller variables are forwarded. Missing passthrough
 variables are errors, empty values are preserved, and values are never stored

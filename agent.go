@@ -149,29 +149,6 @@ func effectiveAgentNames(selectedAgent string, withAgents []string, config *Deve
 	return normalizeAgentNames(selectedAgent, additional)
 }
 
-func guestPackageInstalled(project string, vmName string, packageName string, limactlCommand string) (bool, error) {
-	options := defaultProcessOptions(limactlCommand)
-	options.captureOutput = true
-	options.check = false
-	result, err := runGuest(project, vmName, []string{"dpkg-query", "--show", "--showformat=${Status}", packageName}, options, nil)
-	if err != nil {
-		return false, err
-	}
-	if result.ExitCode == 1 {
-		if err := verifyGuestConnection(project, vmName, limactlCommand); err != nil {
-			return false, err
-		}
-		return false, nil
-	}
-	if result.ExitCode != 0 {
-		if err := verifyGuestConnection(project, vmName, limactlCommand); err != nil {
-			return false, err
-		}
-		return false, ljaError("package query failed for %s: exit status %d", packageName, result.ExitCode)
-	}
-	return strings.TrimSpace(string(result.Stdout)) == packageInstalledStatus, nil
-}
-
 func effectiveDevelopmentPackages(config DevelopmentConfig) []string {
 	packages := append([]string{}, config.Packages...)
 	if config.GPGForwarding {
@@ -182,60 +159,6 @@ func effectiveDevelopmentPackages(config DevelopmentConfig) []string {
 	}
 	return uniqueStrings(packages)
 }
-
-func guestPackageInstallationScript(packageNames []string) string {
-	quotedPackages := make([]string, 0, len(packageNames))
-	for _, packageName := range packageNames {
-		quotedPackages = append(quotedPackages, shellQuote(packageName))
-	}
-	return fmt.Sprintf(
-		"%s %s update && %s %s %s -y %s",
-		sudoCommand,
-		aptGetCommand,
-		sudoCommand,
-		aptGetCommand,
-		installCommand,
-		strings.Join(quotedPackages, " "),
-	)
-}
-
-func ensureGuestPackages(project string, vmName string, packageNames []string, limactlCommand string) error {
-	missing := make([]string, 0, len(packageNames))
-	for _, packageName := range uniqueStrings(packageNames) {
-		installed, err := guestPackageInstalled(project, vmName, packageName, limactlCommand)
-		if err != nil {
-			return ljaError("cannot prepare package %s in VM %s: %w", packageName, vmName, err)
-		}
-		if !installed {
-			missing = append(missing, packageName)
-		}
-	}
-	if len(missing) == 0 {
-		return nil
-	}
-
-	slog.Info("installing packages", "packages", missing, "vm", vmName)
-	options := defaultProcessOptions(limactlCommand)
-	if _, err := runGuest(project, vmName, []string{
-		shellCommand,
-		"-eu",
-		shellCommandFlag,
-		guestPackageInstallationScript(missing),
-	}, options, nil); err != nil {
-		return ljaError("cannot prepare packages %s in VM %s: %w", strings.Join(missing, ", "), vmName, err)
-	}
-	for _, packageName := range missing {
-		installed, err := guestPackageInstalled(project, vmName, packageName, limactlCommand)
-		if err != nil {
-			return ljaError("cannot prepare package %s in VM %s: %w", packageName, vmName, err)
-		}
-		if !installed {
-			return ljaError("cannot prepare package %s in VM %s: installation did not provide the requested package", packageName, vmName)
-		}
-	}
-	return nil
-}
-
 func ensureNodeRuntime(project string, vmName string, limactlCommand string, contexts ...context.Context) error {
 	nodeAvailable, err := guestExecutableAvailable(project, vmName, snapNodePackage, limactlCommand, contexts...)
 	if err != nil {
