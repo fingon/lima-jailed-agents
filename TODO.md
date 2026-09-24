@@ -192,7 +192,7 @@ The implementation and isolated tests are complete; the remaining validation
 requires a session with access to Lima's host state. The current nono sandbox
 does not grant access to `~/.lima`.
 
-- [ ] In a disposable Lima VM and disposable host `GNUPGHOME`, enable
+- [x] In a disposable Lima VM and disposable host `GNUPGHOME`, enable
   `gpg_forwarding`. Run `lja shell -- gpg --list-keys`, create a detached
   signature in the guest, and verify it on the host. Encrypt on the host and
   decrypt in the guest. Confirm no private-key files were copied.

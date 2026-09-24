@@ -56,3 +56,15 @@ Disabling GitHub support on the Fedora project left both `GH_TOKEN` and
 also produced GitHub's explicit `admin:public_key` scope guidance when used
 against an endpoint outside its permissions. No token values were included
 in captured or recorded validation output.
+
+## GPG real-Lima validation
+
+On 2026-09-24, Ubuntu 26.04 under Lima 2.2.0 was validated with GnuPG
+2.5.22 and a disposable host `GNUPGHOME`. The project enabled
+`gpg_forwarding` and used `mountType: reverse-sshfs` because the validation
+host could not obtain the default VZ virtiofs sandbox extension.
+
+The guest listed the forwarded public key, created a detached signature that
+the host verified, and decrypted ciphertext created by the host. The guest
+session had no `private-keys-v1.d` directory before or after decryption, and
+the disposable host keyring was destroyed after the run.
