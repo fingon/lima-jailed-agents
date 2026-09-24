@@ -394,6 +394,31 @@ func TestPreparationBatchesGuestPackages(t *testing.T) {
 	}
 }
 
+func TestPreparationKeepsPackageInstallationBeforeSetup(t *testing.T) {
+	project, vmName, options := vmFixture(t, limaStatusRunning)
+	config := DevelopmentConfig{
+		Packages: []string{"make"},
+		Setup:    []SetupCommand{{Command: testSetupCommand}},
+	}
+	assert.NilError(t, prepareDevelopment(project, vmName, &config, nil, options.LimaCommand))
+
+	database, err := readVMDatabase()
+	assert.NilError(t, err)
+	packageIndex := -1
+	setupIndex := -1
+	for index, operation := range database.Operations {
+		if len(operation) >= 5 && isPackageInstallationCommand(operation[4:]) {
+			packageIndex = index
+		}
+		if len(operation) > 0 && operation[len(operation)-1] == testSetupCommand {
+			setupIndex = index
+		}
+	}
+	assert.Assert(t, packageIndex >= 0)
+	assert.Assert(t, setupIndex >= 0)
+	assert.Assert(t, packageIndex < setupIndex)
+}
+
 func TestPreparationSkipsReadyAndEmptyGuestPackages(t *testing.T) {
 	for _, test := range []struct {
 		name               string

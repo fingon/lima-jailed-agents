@@ -38,7 +38,7 @@ below.
   absent versus empty base/images, custom images, relative references,
   creation/recreation stdin transport, and exact mount arguments. Verify
   existing guests use their actual distribution despite template changes.
-- [ ] Test both backends for installed/missing dependencies, RPM capability
+- [x] Test both backends for installed/missing dependencies, RPM capability
   providers, invalid package names, unsupported distributions, missing tools,
   failed connections, query failures, install failures, and post-install
   verification. Cover GPG dependency mapping and unchanged setup ordering.
