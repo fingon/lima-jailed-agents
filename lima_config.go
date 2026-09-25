@@ -23,7 +23,10 @@ func decodeLimaConfig(node *yaml.Node) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	config := value.(map[string]any)
+	config, ok := value.(map[string]any)
+	if !ok {
+		return nil, configNodeError(node, "lima must be a mapping")
+	}
 	if _, present := config[limaMountsKey]; present {
 		return nil, configNodeError(node, "lima.mounts is managed by LJA")
 	}
@@ -98,7 +101,10 @@ func mergeLimaConfig(base, override map[string]any) map[string]any {
 	}
 	for key, value := range override {
 		if mapping, ok := value.(map[string]any); ok {
-			inherited, _ := result[key].(map[string]any)
+			inherited, ok := result[key].(map[string]any)
+			if !ok {
+				inherited = nil
+			}
 			result[key] = mergeLimaConfig(inherited, mapping)
 		} else {
 			result[key] = cloneLimaValue(value)

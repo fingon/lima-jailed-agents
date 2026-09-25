@@ -10,11 +10,22 @@ import (
 )
 
 const (
-	packageTestStateEnv       = "LJA_TEST_PACKAGE_STATE"
-	packageTestLogEnv         = "LJA_TEST_PACKAGE_LOG"
-	packageTestIDEnv          = "LJA_TEST_PACKAGE_ID"
-	packageTestModeEnv        = "LJA_TEST_PACKAGE_MODE"
-	packageTestMissingToolEnv = "LJA_TEST_PACKAGE_MISSING_TOOL"
+	packageTestStateEnv          = "LJA_TEST_PACKAGE_STATE"
+	packageTestLogEnv            = "LJA_TEST_PACKAGE_LOG"
+	packageTestIDEnv             = "LJA_TEST_PACKAGE_ID"
+	packageTestModeEnv           = "LJA_TEST_PACKAGE_MODE"
+	packageTestMissingToolEnv    = "LJA_TEST_PACKAGE_MISSING_TOOL"
+	gccPackageName               = "gcc"
+	ubuntuInstallMakeGCC         = "sudo apt-get update && sudo apt-get install -y 'make' 'gcc'"
+	packageQueryFailureError     = "package database query failed"
+	guestConnectionFailureError  = "cannot connect to guest VM"
+	packageInstallFailureError   = "cannot install dependencies"
+	packageVerificationError     = "installation did not provide"
+	dpkgShowFormat               = "--showformat=${Status}"
+	packageQueryFailureMode      = "query-failure"
+	packageConnectionFailureMode = "connection-failure"
+	packageInstallFailureMode    = "install-failure"
+	packageVerificationMode      = "verification-failure"
 )
 
 func TestParseGuestOSRelease(t *testing.T) {
@@ -24,9 +35,9 @@ func TestParseGuestOSRelease(t *testing.T) {
 		wantID  string
 		want    string
 	}{
-		{name: "ubuntu", content: "NAME=Ubuntu\nID=ubuntu\n", wantID: "ubuntu"},
-		{name: "quoted Fedora", content: "NAME=Fedora\nID=\"Fedora\"\n", wantID: "fedora"},
-		{name: "comments and single quotes", content: "# comment\nID='debian'\n", wantID: "debian"},
+		{name: ubuntuOSID, content: "NAME=Ubuntu\nID=ubuntu\n", wantID: ubuntuOSID},
+		{name: "quoted Fedora", content: "NAME=Fedora\nID=\"Fedora\"\n", wantID: fedoraPackageBackend},
+		{name: "comments and single quotes", content: "# comment\nID='" + debianOSID + "'\n", wantID: debianOSID},
 		{name: "missing ID", content: "NAME=Unknown\n", want: "has no ID"},
 		{name: "malformed entry", content: "ID ubuntu\n", want: "invalid /etc/os-release entry"},
 		{name: "unterminated quote", content: "ID=\"ubuntu\n", want: "invalid /etc/os-release quoting"},
@@ -57,35 +68,35 @@ func TestPackageBackendSelection(t *testing.T) {
 	}{
 		{
 			name:            "Ubuntu",
-			id:              "ubuntu",
+			id:              ubuntuOSID,
 			wantName:        ubuntuDebianPackageBackend,
-			wantQuery:       []string{dpkgQueryCommand, "--show", "--showformat=${Status}", "make"},
-			wantInstall:     []string{shellCommand, "-eu", shellCommandFlag, "sudo apt-get update && sudo apt-get install -y 'make' 'gcc'"},
+			wantQuery:       []string{dpkgQueryCommand, dpkgShowFlag, dpkgShowFormat, makeCommand},
+			wantInstall:     []string{shellCommand, shellStrictFlag, shellCommandFlag, ubuntuInstallMakeGCC},
 			wantGPG:         gpgPackage,
-			wantNode:        []string{"nodejs", npmCommand},
-			wantDevelopment: []string{"make", "git", gpgPackage},
+			wantNode:        []string{nodePackageName, npmCommand},
+			wantDevelopment: []string{makeCommand, gitCommand, gpgPackage},
 			wantToolCount:   3,
 		},
 		{
 			name:            "Debian",
 			id:              "debian",
 			wantName:        ubuntuDebianPackageBackend,
-			wantQuery:       []string{dpkgQueryCommand, "--show", "--showformat=${Status}", "make"},
-			wantInstall:     []string{shellCommand, "-eu", shellCommandFlag, "sudo apt-get update && sudo apt-get install -y 'make' 'gcc'"},
+			wantQuery:       []string{dpkgQueryCommand, dpkgShowFlag, dpkgShowFormat, makeCommand},
+			wantInstall:     []string{shellCommand, shellStrictFlag, shellCommandFlag, ubuntuInstallMakeGCC},
 			wantGPG:         gpgPackage,
-			wantNode:        []string{"nodejs", npmCommand},
-			wantDevelopment: []string{"make", "git", gpgPackage},
+			wantNode:        []string{nodePackageName, npmCommand},
+			wantDevelopment: []string{makeCommand, gitCommand, gpgPackage},
 			wantToolCount:   3,
 		},
 		{
 			name:            "Fedora capability query",
-			id:              "fedora",
+			id:              fedoraPackageBackend,
 			wantName:        fedoraPackageBackend,
-			wantQuery:       []string{rpmCommand, "-q", "--whatprovides", "make"},
-			wantInstall:     []string{sudoCommand, dnfCommand, installCommand, "-y", "make", "gcc"},
-			wantGPG:         "gnupg2",
-			wantNode:        []string{"nodejs", npmCommand},
-			wantDevelopment: []string{"make", "git", "gnupg2"},
+			wantQuery:       []string{rpmCommand, "-q", "--whatprovides", makeCommand},
+			wantInstall:     []string{sudoCommand, dnfCommand, installCommand, "-y", "make", gccPackageName},
+			wantGPG:         fedoraGPGPackage,
+			wantNode:        []string{nodePackageName, npmCommand},
+			wantDevelopment: []string{makeCommand, gitCommand, fedoraGPGPackage},
 			wantToolCount:   3,
 		},
 	} {
@@ -96,12 +107,12 @@ func TestPackageBackendSelection(t *testing.T) {
 			assert.Equal(t, backend.gpgPackage, test.wantGPG)
 			assert.DeepEqual(t, backend.nodePackageNames(), test.wantNode)
 			assert.DeepEqual(t, backend.developmentPackageNames(DevelopmentConfig{
-				Packages:      []string{"make", "git", "make"},
+				Packages:      []string{makeCommand, gitCommand, makeCommand},
 				GPGForwarding: true,
 				CopyGitConfig: true,
 			}), test.wantDevelopment)
 			assert.DeepEqual(t, backend.queryArguments("make"), test.wantQuery)
-			assert.DeepEqual(t, backend.installArguments([]string{"make", "gcc"}), test.wantInstall)
+			assert.DeepEqual(t, backend.installArguments([]string{makeCommand, gccPackageName}), test.wantInstall)
 			assert.Equal(t, len(backend.requiredTools), test.wantToolCount)
 		})
 	}
@@ -133,11 +144,11 @@ func TestGitHubDevelopmentDependencies(t *testing.T) {
 		copyGitConfig   bool
 		wantDevelopment []string
 	}{
-		{name: "without Git copying", wantDevelopment: []string{"git", ghCommand}},
-		{name: "with Git copying", copyGitConfig: true, wantDevelopment: []string{"git", ghCommand}},
+		{name: "without Git copying", wantDevelopment: []string{gitCommand, ghCommand}},
+		{name: "with Git copying", copyGitConfig: true, wantDevelopment: []string{gitCommand, ghCommand}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			backend, err := packageBackendForOSRelease(guestOSRelease{ID: "ubuntu"})
+			backend, err := packageBackendForOSRelease(guestOSRelease{ID: ubuntuOSID})
 			assert.NilError(t, err)
 			assert.DeepEqual(t, backend.developmentPackageNames(DevelopmentConfig{
 				GitHub:        GitHubConfig{Enabled: true},
@@ -159,7 +170,7 @@ func TestPackageNameValidation(t *testing.T) {
 		{name: "Debian uppercase", backend: guestPackageBackend{name: ubuntuDebianPackageBackend}, values: []string{"NodeJS"}},
 		{name: "RPM uppercase and underscore", backend: guestPackageBackend{name: fedoraPackageBackend}, values: []string{"NodeJS_22-devel"}, valid: true},
 		{name: "RPM architecture qualifier", backend: guestPackageBackend{name: fedoraPackageBackend}, values: []string{"nodejs:amd64"}},
-		{name: "option", backend: guestPackageBackend{name: fedoraPackageBackend}, values: []string{"--help"}},
+		{name: "option", backend: guestPackageBackend{name: fedoraPackageBackend}, values: []string{helpFlag}},
 		{name: "path", backend: guestPackageBackend{name: fedoraPackageBackend}, values: []string{"./nodejs"}},
 		{name: "URL", backend: guestPackageBackend{name: fedoraPackageBackend}, values: []string{"https://example.test/pkg"}},
 		{name: "glob", backend: guestPackageBackend{name: fedoraPackageBackend}, values: []string{"node*"}},
@@ -223,10 +234,14 @@ esac
 `
 	assert.NilError(t, os.WriteFile(commandPath, []byte(command), 0o755))
 
-	backend, err := ensureDevelopmentPackages(project, "fedora-vm", DevelopmentConfig{
+	backend, err := ensureDevelopmentPackages(guestPackageOptions{
+		project:        project,
+		vmName:         "fedora-vm",
+		limactlCommand: commandPath,
+	}, DevelopmentConfig{
 		Lima:     map[string]any{limaBaseKey: "template:ubuntu"},
 		Packages: []string{"nodejs", "npm"},
-	}, commandPath)
+	})
 	assert.NilError(t, err)
 	assert.Equal(t, backend.name, fedoraPackageBackend)
 	_, err = os.Stat(statePath)
@@ -328,20 +343,20 @@ esac
 		wantError        string
 		wantInstall      bool
 	}{
-		{name: "Ubuntu installed", id: "ubuntu", initiallyPresent: true, wantBackend: ubuntuDebianPackageBackend},
-		{name: "Ubuntu missing", id: "ubuntu", wantBackend: ubuntuDebianPackageBackend, wantInstall: true},
-		{name: "Fedora installed capability", id: "fedora", initiallyPresent: true, wantBackend: fedoraPackageBackend},
-		{name: "Fedora missing capability", id: "fedora", wantBackend: fedoraPackageBackend, wantInstall: true},
-		{name: "Ubuntu missing tool", id: "ubuntu", missingTool: aptGetCommand, wantError: "requires guest tool apt-get"},
-		{name: "Fedora missing tool", id: "fedora", missingTool: dnfCommand, wantError: "requires guest tool dnf"},
-		{name: "Ubuntu query failure", id: "ubuntu", mode: "query-failure", wantError: "package database query failed"},
-		{name: "Fedora query failure", id: "fedora", mode: "query-failure", wantError: "package database query failed"},
-		{name: "Ubuntu connection failure", id: "ubuntu", mode: "connection-failure", wantError: "cannot connect to guest VM"},
-		{name: "Fedora connection failure", id: "fedora", mode: "connection-failure", wantError: "cannot connect to guest VM"},
-		{name: "Ubuntu install failure", id: "ubuntu", mode: "install-failure", wantError: "cannot install dependencies"},
-		{name: "Fedora install failure", id: "fedora", mode: "install-failure", wantError: "cannot install dependencies"},
-		{name: "Ubuntu post-install verification", id: "ubuntu", mode: "verification-failure", wantError: "installation did not provide"},
-		{name: "Fedora post-install verification", id: "fedora", mode: "verification-failure", wantError: "installation did not provide"},
+		{name: "Ubuntu installed", id: ubuntuOSID, initiallyPresent: true, wantBackend: ubuntuDebianPackageBackend},
+		{name: "Ubuntu missing", id: ubuntuOSID, wantBackend: ubuntuDebianPackageBackend, wantInstall: true},
+		{name: "Fedora installed capability", id: fedoraPackageBackend, initiallyPresent: true, wantBackend: fedoraPackageBackend},
+		{name: "Fedora missing capability", id: fedoraPackageBackend, wantBackend: fedoraPackageBackend, wantInstall: true},
+		{name: "Ubuntu missing tool", id: ubuntuOSID, missingTool: aptGetCommand, wantError: "requires guest tool apt-get"},
+		{name: "Fedora missing tool", id: fedoraPackageBackend, missingTool: dnfCommand, wantError: "requires guest tool dnf"},
+		{name: "Ubuntu query failure", id: ubuntuOSID, mode: packageQueryFailureMode, wantError: packageQueryFailureError},
+		{name: "Fedora query failure", id: fedoraPackageBackend, mode: packageQueryFailureMode, wantError: packageQueryFailureError},
+		{name: "Ubuntu connection failure", id: ubuntuOSID, mode: packageConnectionFailureMode, wantError: guestConnectionFailureError},
+		{name: "Fedora connection failure", id: fedoraPackageBackend, mode: packageConnectionFailureMode, wantError: guestConnectionFailureError},
+		{name: "Ubuntu install failure", id: ubuntuOSID, mode: packageInstallFailureMode, wantError: packageInstallFailureError},
+		{name: "Fedora install failure", id: fedoraPackageBackend, mode: packageInstallFailureMode, wantError: packageInstallFailureError},
+		{name: "Ubuntu post-install verification", id: ubuntuOSID, mode: packageVerificationMode, wantError: packageVerificationError},
+		{name: "Fedora post-install verification", id: fedoraPackageBackend, mode: packageVerificationMode, wantError: packageVerificationError},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -360,7 +375,11 @@ esac
 			t.Setenv(packageTestModeEnv, test.mode)
 			t.Setenv(packageTestMissingToolEnv, test.missingTool)
 
-			backend, err := ensureDevelopmentPackages(project, "package-test-vm", DevelopmentConfig{Packages: []string{"make"}}, commandPath)
+			backend, err := ensureDevelopmentPackages(guestPackageOptions{
+				project:        project,
+				vmName:         "package-test-vm",
+				limactlCommand: commandPath,
+			}, DevelopmentConfig{Packages: []string{makeCommand}})
 			if test.wantError != "" {
 				assert.ErrorContains(t, err, test.wantError)
 				return

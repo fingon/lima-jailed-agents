@@ -44,73 +44,90 @@ func CreateVM(project string, options WorkflowOptions) (returnedInstance LimaIns
 		return LimaInstance{}, err
 	}
 	var result LimaInstance
-	err = withAdvisoryLock(canonicalProject, vmName, options.StateRoot, options.LockDirectory, func(string) error {
-		if !options.Recreate {
-			instance, err := inspectLima(vmName, options.limaCommand())
-			if err != nil {
-				return err
-			}
-			if instance != nil {
-				if err := validateProjectMount(*instance, canonicalProject, options.StateRoot); err != nil {
-					return err
-				}
-				agentNames, err := configuredAgentNames(options.Development)
-				if err != nil {
-					return err
-				}
-				if len(agentNames) == 0 {
-					result = *instance
-					return nil
-				}
-				if err := ensureGitHub(); err != nil {
-					return err
-				}
-				if instance.Status == limaStatusStopped {
-					slog.Info("starting VM", "vm", vmName)
-					startOptions := options.gpg.processOptions(options.limaCommand())
-					if _, err := runLima([]string{limaStartOperation, vmName}, startOptions); err != nil {
-						return err
-					}
-					instance, err = inspectLima(vmName, options.limaCommand())
-					if err != nil {
-						return err
-					}
-					if instance == nil {
-						return ljaError("Lima VM %s disappeared during agent preparation", vmName)
-					}
-				}
-				if instance.Status != limaStatusRunning {
-					return ljaError("VM %s is in incompatible state %s", vmName, instance.Status)
-				}
-				if err := prepareConfiguredAgentsLocked(canonicalProject, vmName, options.StateRoot, options.Development, options.agentTrustDirectories, options.LockDirectory, options.limaCommand(), "", true, options.gpg); err != nil {
-					return err
-				}
-				result = *instance
-				return nil
-			}
-		}
-		if err := ensureGitHub(); err != nil {
-			return err
-		}
-		if options.Environment == nil {
-			config := developmentConfigOrDefault(options.Development)
-			environment, err := config.ResolveEnvironment(environmentMap())
-			if err != nil {
-				return err
-			}
-			options.Environment = environment
-		}
-		instance, err := options.prepareVMLocked(canonicalProject, vmName)
-		if err != nil {
-			return err
-		}
-		result = instance
-		return nil
+	err = withAdvisoryLock(AdvisoryLockOptions{
+		Project:       canonicalProject,
+		VMName:        vmName,
+		StateRoot:     options.StateRoot,
+		LockDirectory: options.LockDirectory,
+	}, func(string) error {
+		var lockErr error
+		result, lockErr = options.createVMLocked(canonicalProject, vmName, ensureGitHub)
+		return lockErr
 	})
 	if err != nil {
 		return LimaInstance{}, err
 	}
 	return result, nil
+}
+
+func (options WorkflowOptions) createVMLocked(project, vmName string, ensureGitHub func() error) (LimaInstance, error) {
+	if !options.Recreate {
+		instance, err := inspectLima(vmName, options.limaCommand())
+		if err != nil {
+			return LimaInstance{}, err
+		}
+		if instance != nil {
+			return options.prepareExistingVMLocked(project, vmName, instance, ensureGitHub)
+		}
+	}
+	if err := ensureGitHub(); err != nil {
+		return LimaInstance{}, err
+	}
+	if options.Environment == nil {
+		config := developmentConfigOrDefault(options.Development)
+		environment, err := config.ResolveEnvironment(environmentMap())
+		if err != nil {
+			return LimaInstance{}, err
+		}
+		options.Environment = environment
+	}
+	return options.prepareVMLocked(project, vmName)
+}
+
+func (options WorkflowOptions) prepareExistingVMLocked(project, vmName string, instance *LimaInstance, ensureGitHub func() error) (LimaInstance, error) {
+	if err := validateProjectMount(*instance, project, options.StateRoot); err != nil {
+		return LimaInstance{}, err
+	}
+	agentNames, err := configuredAgentNames(options.Development)
+	if err != nil {
+		return LimaInstance{}, err
+	}
+	if len(agentNames) == 0 {
+		return *instance, nil
+	}
+	if err := ensureGitHub(); err != nil {
+		return LimaInstance{}, err
+	}
+	instance, err = options.startExistingVMLocked(vmName, instance)
+	if err != nil {
+		return LimaInstance{}, err
+	}
+	if instance.Status != limaStatusRunning {
+		return LimaInstance{}, ljaError("VM %s is in incompatible state %s", vmName, instance.Status)
+	}
+	if err := prepareConfiguredAgentsLocked(options.agentPreparation(project, vmName, true, "")); err != nil {
+		return LimaInstance{}, err
+	}
+	return *instance, nil
+}
+
+func (options WorkflowOptions) startExistingVMLocked(vmName string, instance *LimaInstance) (*LimaInstance, error) {
+	if instance.Status != limaStatusStopped {
+		return instance, nil
+	}
+	slog.Info("starting VM", "vm", vmName)
+	startOptions := options.gpg.processOptions(options.limaCommand())
+	if _, err := runLima([]string{limaStartOperation, vmName}, startOptions); err != nil {
+		return nil, err
+	}
+	instance, err := inspectLima(vmName, options.limaCommand())
+	if err != nil {
+		return nil, err
+	}
+	if instance == nil {
+		return nil, ljaError("Lima VM %s disappeared during agent preparation", vmName)
+	}
+	return instance, nil
 }
 
 func (options WorkflowOptions) prepareVMLocked(project, vmName string) (LimaInstance, error) {
@@ -123,7 +140,12 @@ func (options WorkflowOptions) prepareVMLocked(project, vmName string) (LimaInst
 			return options.replaceVMLocked(project, *old)
 		}
 	}
-	return prepareNamedVMLocked(project, vmName, options.StateRoot, options.Development, options.Environment, options.agentTrustDirectories, options.LockDirectory, options.limaCommand(), options.agentUpdateName, true, options.gpg, options.github)
+	return prepareNamedVMLocked(namedVMPreparationOptions{
+		project:         project,
+		vmName:          vmName,
+		workflowOptions: options,
+		prepareWrappers: true,
+	})
 }
 
 type vmReplacement struct {
@@ -145,12 +167,14 @@ func (options WorkflowOptions) replaceVMLocked(project string, old LimaInstance)
 	}
 	probe := defaultProcessOptions(options.limaCommand())
 	probe.captureOutput = true
-	if _, err := runLima([]string{limaRenameOperation, "--help"}, probe); err != nil {
+	if _, err := runLima([]string{limaRenameOperation, helpFlag}, probe); err != nil {
 		return LimaInstance{}, ljaError("VM recreation requires limactl rename: %w", err)
 	}
-	replacement := vmReplacement{options: options, project: project, old: old,
+	replacement := vmReplacement{
+		options: options, project: project, old: old,
 		candidate: replacementNamePrefix + strings.ToLower(rand.Text()[:transactionNameLength]),
-		backup:    backupNamePrefix + strings.ToLower(rand.Text()[:transactionNameLength])}
+		backup:    backupNamePrefix + strings.ToLower(rand.Text()[:transactionNameLength]),
+	}
 	for _, name := range []string{replacement.candidate, replacement.backup} {
 		instance, err := inspectLima(name, options.limaCommand())
 		if err != nil {
@@ -170,7 +194,12 @@ func (options WorkflowOptions) replaceVMLocked(project string, old LimaInstance)
 			}
 		}
 	}()
-	if _, err := prepareNamedVMLocked(project, replacement.candidate, options.StateRoot, options.Development, options.Environment, options.agentTrustDirectories, options.LockDirectory, options.limaCommand(), options.agentUpdateName, false, options.gpg, options.github); err != nil {
+	if _, err := prepareNamedVMLocked(namedVMPreparationOptions{
+		project:         project,
+		vmName:          replacement.candidate,
+		workflowOptions: options,
+		prepareWrappers: false,
+	}); err != nil {
 		return LimaInstance{}, err
 	}
 	if err := options.gpg.closeSession(); err != nil {
@@ -198,7 +227,7 @@ func (options WorkflowOptions) replaceVMLocked(project string, old LimaInstance)
 	if err := replacement.operation(deleteCommandName, limaForceFlag, replacement.backup); err != nil {
 		return LimaInstance{}, ljaError("replacement VM %s is ready, but backup %s could not be deleted: %w", old.Name, replacement.backup, err)
 	}
-	if err := prepareConfiguredAgentsLocked(project, instance.Name, options.StateRoot, options.Development, options.agentTrustDirectories, options.LockDirectory, options.limaCommand(), "", true); err != nil {
+	if err := prepareConfiguredAgentsLocked(options.agentPreparation(project, instance.Name, true, "")); err != nil {
 		return LimaInstance{}, ljaError("replacement VM %s is ready, but configured agent preparation failed: %w", old.Name, err)
 	}
 	slog.Info("replaced VM", "vm", old.Name)
@@ -229,7 +258,7 @@ func (replacement vmReplacement) startAndValidate() (LimaInstance, error) {
 	if instance.Status != limaStatusRunning {
 		return LimaInstance{}, ljaError("replacement VM %s did not reach Running state", instance.Name)
 	}
-	if err := verifyGuestConnection(replacement.project, instance.Name, replacement.options.limaCommand()); err != nil {
+	if err := verifyGuestConnection(replacement.project, instance.Name, defaultProcessOptions(replacement.options.limaCommand())); err != nil {
 		return LimaInstance{}, err
 	}
 	return *instance, nil

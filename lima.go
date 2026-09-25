@@ -15,12 +15,19 @@ const (
 	limaListAllFields        = "--all-fields"
 	limaListFormatFlag       = "--format"
 	limaListFormatJSON       = "json"
+	limaMountOnlyFlag        = "--mount-only"
 	limaMountWritableSuffix  = ":w"
+	limaConfigKey            = "config"
+	limaNameFlag             = "--name"
+	limaStatusKey            = "status"
+	limaMemoryKey            = "memory"
+	limaShellOperation       = "shell"
 	limaStatusUninitialized  = "Uninitialized"
 	limaStatusInstalling     = "Installing"
 	limaStatusBroken         = "Broken"
 	limaStatusStopped        = "Stopped"
 	limaStatusRunning        = "Running"
+	jsonNullValue            = "null"
 )
 
 var knownLimaStatuses = map[string]bool{
@@ -62,7 +69,7 @@ func rawObject(value json.RawMessage, context string) (map[string]json.RawMessag
 	return object, nil
 }
 
-func requiredJSONString(object map[string]json.RawMessage, name string, context string) (string, error) {
+func requiredJSONString(object map[string]json.RawMessage, name, context string) (string, error) {
 	raw, present := object[name]
 	if !present {
 		return "", ljaError("malformed Lima JSON: %s has no %s", context, name)
@@ -120,11 +127,11 @@ func ParseLimaInstances(payload []byte) ([]LimaInstance, error) {
 		if err != nil {
 			return nil, err
 		}
-		status, err := requiredJSONString(instance, "status", "instance "+name)
+		status, err := requiredJSONString(instance, limaStatusKey, "instance "+name)
 		if err != nil {
 			return nil, err
 		}
-		rawConfig, present := instance["config"]
+		rawConfig, present := instance[limaConfigKey]
 		if !present {
 			return nil, ljaError("malformed Lima JSON: instance %s.config must be an object", name)
 		}
@@ -132,7 +139,7 @@ func ParseLimaInstances(payload []byte) ([]LimaInstance, error) {
 		if err != nil {
 			return nil, err
 		}
-		rawMounts, present := config["mounts"]
+		rawMounts, present := config[limaMountsKey]
 		if !present || len(bytes.TrimSpace(rawMounts)) == 0 || bytes.TrimSpace(rawMounts)[0] != '[' {
 			return nil, ljaError("malformed Lima JSON: instance %s.config.mounts must be an array", name)
 		}
@@ -151,7 +158,7 @@ func ParseLimaInstances(payload []byte) ([]LimaInstance, error) {
 				return nil, err
 			}
 			mountPoint := location
-			if rawMountPoint, found := mount["mountPoint"]; found && string(bytes.TrimSpace(rawMountPoint)) != "null" {
+			if rawMountPoint, found := mount["mountPoint"]; found && string(bytes.TrimSpace(rawMountPoint)) != jsonNullValue {
 				if decodeErr := json.Unmarshal(rawMountPoint, &mountPoint); decodeErr != nil || mountPoint == "" {
 					return nil, ljaError("malformed Lima JSON: instance %s mount %d has an invalid mount point", name, mountIndex)
 				}
@@ -169,11 +176,7 @@ func ParseLimaInstances(payload []byte) ([]LimaInstance, error) {
 	return instances, nil
 }
 
-func parseLimaInstances(payload []byte) ([]LimaInstance, error) {
-	return ParseLimaInstances(payload)
-}
-
-func InspectLima(vmName string, limactlCommand string) (*LimaInstance, error) {
+func InspectLima(vmName, limactlCommand string) (*LimaInstance, error) {
 	options := defaultProcessOptions(limactlCommand)
 	options.captureOutput = true
 	result, err := runLima(limaListOperation(), options)
@@ -197,11 +200,11 @@ func InspectLima(vmName string, limactlCommand string) (*LimaInstance, error) {
 	return nil, nil
 }
 
-func inspectLima(vmName string, limactlCommand string) (*LimaInstance, error) {
+func inspectLima(vmName, limactlCommand string) (*LimaInstance, error) {
 	return InspectLima(vmName, limactlCommand)
 }
 
-func ExpectedMountPaths(project string, stateRoot string) ([]string, error) {
+func ExpectedMountPaths(project, stateRoot string) ([]string, error) {
 	canonicalProject, err := canonicalProjectPath(project)
 	if err != nil {
 		return nil, err
@@ -230,7 +233,7 @@ func ExpectedMountPaths(project string, stateRoot string) ([]string, error) {
 	return []string{canonicalProject, canonicalState}, nil
 }
 
-func expectedMountPaths(project string, stateRoot string) ([]string, error) {
+func expectedMountPaths(project, stateRoot string) ([]string, error) {
 	return ExpectedMountPaths(project, stateRoot)
 }
 
@@ -238,7 +241,7 @@ func canonicalHostPath(path string) (string, error) {
 	return canonicalPath(path)
 }
 
-func ValidateProjectMount(instance LimaInstance, project string, stateRoot string) error {
+func ValidateProjectMount(instance LimaInstance, project, stateRoot string) error {
 	expected, err := ExpectedMountPaths(project, stateRoot)
 	if err != nil {
 		return err
@@ -275,7 +278,7 @@ func ValidateProjectMount(instance LimaInstance, project string, stateRoot strin
 	return nil
 }
 
-func validateProjectMount(instance LimaInstance, project string, stateRoot string) error {
+func validateProjectMount(instance LimaInstance, project, stateRoot string) error {
 	return ValidateProjectMount(instance, project, stateRoot)
 }
 
@@ -294,14 +297,26 @@ func MountArguments(paths []string) ([]string, error) {
 		return nil, ljaError("cannot encode Lima mount paths: %w", err)
 	}
 	encoded := strings.TrimSuffix(buffer.String(), "\n")
-	return []string{"--mount-only", encoded}, nil
+	return []string{limaMountOnlyFlag, encoded}, nil
 }
 
 func mountArguments(paths []string) ([]string, error) {
 	return MountArguments(paths)
 }
 
-func prepareNamedVMLocked(project string, vmName string, stateRoot string, development *DevelopmentConfig, environment map[string]string, trustDirectories []string, lockDirectory string, limactlCommand string, updateAgentName string, prepareWrappers bool, gpg *gpgWorkflow, github *githubWorkflow) (LimaInstance, error) {
+type namedVMPreparationOptions struct {
+	project         string
+	vmName          string
+	workflowOptions WorkflowOptions
+	prepareWrappers bool
+}
+
+func prepareNamedVMLocked(options namedVMPreparationOptions) (LimaInstance, error) {
+	project := options.project
+	vmName := options.vmName
+	workflowOptions := options.workflowOptions
+	stateRoot := workflowOptions.StateRoot
+	limactlCommand := workflowOptions.limaCommand()
 	if err := validateProjectDirectory(project); err != nil {
 		return LimaInstance{}, err
 	}
@@ -329,8 +344,8 @@ func prepareNamedVMLocked(project string, vmName string, stateRoot string, devel
 		if err != nil {
 			return LimaInstance{}, err
 		}
-		arguments := []string{"create", limaNoninteractiveFlag, "--name", vmName}
-		creationInput, err := limaCreationInput(developmentConfigOrDefault(development).Lima)
+		arguments := []string{createCommandName, limaNoninteractiveFlag, limaNameFlag, vmName}
+		creationInput, err := limaCreationInput(developmentConfigOrDefault(workflowOptions.Development).Lima)
 		if err != nil {
 			return LimaInstance{}, err
 		}
@@ -376,10 +391,18 @@ func prepareNamedVMLocked(project string, vmName string, stateRoot string, devel
 	if instance.Status != limaStatusRunning {
 		return LimaInstance{}, ljaError("VM %s did not reach Running state; current state is %s", vmName, instance.Status)
 	}
-	if err := prepareDevelopment(project, vmName, development, environment, limactlCommand, gpg, github); err != nil {
+	if err := prepareDevelopment(developmentPreparationOptions{
+		project:        project,
+		vmName:         vmName,
+		config:         workflowOptions.Development,
+		environment:    workflowOptions.Environment,
+		limactlCommand: limactlCommand,
+		gpg:            workflowOptions.gpg,
+		github:         workflowOptions.github,
+	}); err != nil {
 		return LimaInstance{}, err
 	}
-	if err := prepareConfiguredAgentsLocked(project, vmName, stateRoot, development, trustDirectories, lockDirectory, limactlCommand, updateAgentName, prepareWrappers, gpg); err != nil {
+	if err := prepareConfiguredAgentsLocked(workflowOptions.agentPreparation(project, vmName, options.prepareWrappers, workflowOptions.agentUpdateName)); err != nil {
 		return LimaInstance{}, err
 	}
 	return *instance, nil
@@ -424,16 +447,18 @@ func StopAllVMs(limactlCommand string) error {
 		if instance.Status == limaStatusRunning {
 			slog.Info("stopping VM", "vm", instance.Name)
 			options := defaultProcessOptions(limactlCommand)
-			if _, err := runLima([]string{"stop", instance.Name}, options); err != nil {
+			if _, err := runLima([]string{stopCommandName, instance.Name}, options); err != nil {
 				return err
 			}
 		}
-		fmt.Printf("vm: %s\nstatus: %s\n", instance.Name, status)
+		if err := reportVMStatus(instance.Name, status); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-func DeleteVM(project string, limactlCommand string) error {
+func DeleteVM(project, limactlCommand string) error {
 	vmName, err := projectVMName(project)
 	if err != nil {
 		return err
@@ -464,7 +489,7 @@ func DeleteAllVMs(limactlCommand string) error {
 func (instance LimaInstance) delete(limactlCommand string) error {
 	slog.Info("deleting VM", "vm", instance.Name)
 	options := defaultProcessOptions(limactlCommand)
-	if _, err := runLima([]string{"delete", "-f", instance.Name}, options); err != nil {
+	if _, err := runLima([]string{deleteCommandName, "-f", instance.Name}, options); err != nil {
 		return err
 	}
 	return reportAbsentVM(instance.Name)
@@ -473,6 +498,13 @@ func (instance LimaInstance) delete(limactlCommand string) error {
 func reportAbsentVM(vmName string) error {
 	if _, err := fmt.Printf("vm: %s\nstatus: Absent\n", vmName); err != nil {
 		return ljaError("cannot report deleted VM %s: %w", vmName, err)
+	}
+	return nil
+}
+
+func reportVMStatus(vmName, status string) error {
+	if _, err := fmt.Printf("vm: %s\nstatus: %s\n", vmName, status); err != nil {
+		return ljaError("cannot report VM %s status: %w", vmName, err)
 	}
 	return nil
 }

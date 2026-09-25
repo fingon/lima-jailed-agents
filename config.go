@@ -2,12 +2,15 @@ package lja
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -68,7 +71,7 @@ type DevelopmentConfig struct {
 	Setup          []SetupCommand
 }
 
-type developmentConfigYAML struct {
+type DevelopmentConfigYAML struct {
 	GPGForwarding  bool              `yaml:"gpg_forwarding"`
 	GitHub         GitHubConfig      `yaml:"github"`
 	Lima           map[string]any    `yaml:"lima"`
@@ -105,13 +108,11 @@ func (config DevelopmentConfig) clone() DevelopmentConfig {
 		EnvPassthrough: append([]string{}, config.EnvPassthrough...),
 		Setup:          append([]SetupCommand{}, config.Setup...),
 	}
-	for name, value := range config.Env {
-		cloned.Env[name] = value
-	}
+	maps.Copy(cloned.Env, config.Env)
 	return cloned
 }
 
-func (config DevelopmentConfig) AsYAML() developmentConfigYAML {
+func (config DevelopmentConfig) AsYAML() DevelopmentConfigYAML {
 	setup := make([]string, 0, len(config.Setup))
 	for _, command := range config.Setup {
 		setup = append(setup, command.Command)
@@ -119,10 +120,8 @@ func (config DevelopmentConfig) AsYAML() developmentConfigYAML {
 	packages := append([]string{}, config.Packages...)
 	passthrough := append([]string{}, config.EnvPassthrough...)
 	environment := make(map[string]string, len(config.Env))
-	for name, value := range config.Env {
-		environment[name] = value
-	}
-	return developmentConfigYAML{
+	maps.Copy(environment, config.Env)
+	return DevelopmentConfigYAML{
 		GPGForwarding:  config.GPGForwarding,
 		GitHub:         config.GitHub.clone(),
 		Lima:           mergeLimaConfig(nil, config.Lima),
@@ -391,7 +390,7 @@ func decodeYAMLDocument(content []byte) (*yaml.Node, error) {
 	decoder := yaml.NewDecoder(bytes.NewReader(content))
 	var document yaml.Node
 	if err := decoder.Decode(&document); err != nil {
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return nil, ljaError("configuration must contain a YAML document")
 		}
 		return nil, ljaError("invalid YAML: %w", err)
@@ -399,7 +398,7 @@ func decodeYAMLDocument(content []byte) (*yaml.Node, error) {
 	var extra yaml.Node
 	if err := decoder.Decode(&extra); err == nil {
 		return nil, configNodeError(&extra, "configuration must contain a single YAML document")
-	} else if err != io.EOF {
+	} else if !errors.Is(err, io.EOF) {
 		return nil, ljaError("invalid YAML: %w", err)
 	}
 	if document.Kind != yaml.DocumentNode || len(document.Content) != 1 {
@@ -571,9 +570,7 @@ func applyDevelopmentConfig(config DevelopmentConfig, source sourceDevelopmentCo
 	if source.HasCopyGitConfig {
 		config.CopyGitConfig = source.CopyGitConfig
 	}
-	for name, value := range source.Env {
-		config.Env[name] = value
-	}
+	maps.Copy(config.Env, source.Env)
 	if source.HasInheritEnvironmentPassthrough && !source.InheritEnvironmentPassthrough {
 		config.EnvPassthrough = []string{}
 	}
@@ -603,10 +600,8 @@ func (config DevelopmentConfig) validateGitHubEnvironment(environment map[string
 		}
 	}
 	for _, name := range []string{githubTokenEnvironment, githubFallbackTokenEnvironment} {
-		for _, passthroughName := range config.EnvPassthrough {
-			if passthroughName == name {
-				return ljaError("%s cannot be passed through when github.enabled is true", name)
-			}
+		if slices.Contains(config.EnvPassthrough, name) {
+			return ljaError("%s cannot be passed through when github.enabled is true", name)
 		}
 	}
 	return nil

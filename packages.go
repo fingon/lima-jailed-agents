@@ -18,6 +18,11 @@ const (
 	osReleasePath                 = "/etc/os-release"
 	ubuntuDebianPackageBackend    = "ubuntu/debian"
 	fedoraPackageBackend          = "fedora"
+	ubuntuOSID                    = "ubuntu"
+	debianOSID                    = "debian"
+	fedoraGPGPackage              = "gnupg2"
+	dpkgShowFlag                  = "--show"
+	nodePackageName               = "nodejs"
 	packageQueryMissingExitStatus = 1
 )
 
@@ -35,6 +40,13 @@ type guestPackageBackend struct {
 	ghPackage      string
 	gpgPackage     string
 	nodePackages   []string
+}
+
+type guestPackageOptions struct {
+	project        string
+	vmName         string
+	limactlCommand string
+	contexts       []context.Context
 }
 
 type guestOSRelease struct {
@@ -95,7 +107,7 @@ func parseGuestOSRelease(content []byte) (guestOSRelease, error) {
 func packageBackendForOSRelease(osRelease guestOSRelease) (guestPackageBackend, error) {
 	id := strings.ToLower(osRelease.ID)
 	switch id {
-	case "ubuntu", "debian":
+	case ubuntuOSID, debianOSID:
 		return guestPackageBackend{
 			name:           ubuntuDebianPackageBackend,
 			queryCommand:   dpkgQueryCommand,
@@ -104,7 +116,7 @@ func packageBackendForOSRelease(osRelease guestOSRelease) (guestPackageBackend, 
 			gitPackage:     gitCommand,
 			ghPackage:      ghCommand,
 			gpgPackage:     gpgPackage,
-			nodePackages:   []string{"nodejs", npmCommand},
+			nodePackages:   []string{nodePackageName, npmCommand},
 		}, nil
 	case "fedora":
 		return guestPackageBackend{
@@ -114,24 +126,23 @@ func packageBackendForOSRelease(osRelease guestOSRelease) (guestPackageBackend, 
 			requiredTools:  []string{rpmCommand, dnfCommand, sudoCommand},
 			gitPackage:     gitCommand,
 			ghPackage:      ghCommand,
-			gpgPackage:     "gnupg2",
-			nodePackages:   []string{"nodejs", npmCommand},
+			gpgPackage:     fedoraGPGPackage,
+			nodePackages:   []string{nodePackageName, npmCommand},
 		}, nil
 	default:
 		return guestPackageBackend{}, ljaError("unsupported guest distribution %s; supported package backends are %s and %s", id, ubuntuDebianPackageBackend, fedoraPackageBackend)
 	}
 }
 
-func readGuestOSRelease(project string, vmName string, limactlCommand string, contexts ...context.Context) (guestOSRelease, error) {
-	options := defaultProcessOptions(limactlCommand, contexts...)
+func readGuestOSRelease(project, vmName string, options processOptions) (guestOSRelease, error) {
 	options.captureOutput = true
 	options.check = false
-	result, err := runGuest(project, vmName, []string{catCommand, osReleasePath}, options, nil)
+	result, err := runGuest(project, vmName, []string{catCommand, osReleasePath}, guestExecution(options, nil))
 	if err != nil {
 		return guestOSRelease{}, ljaError("cannot read %s in VM %s: %w", osReleasePath, vmName, err)
 	}
 	if result.ExitCode != 0 {
-		if connectionErr := verifyGuestConnection(project, vmName, limactlCommand, contexts...); connectionErr != nil {
+		if connectionErr := verifyGuestConnection(project, vmName, options); connectionErr != nil {
 			return guestOSRelease{}, ljaError("cannot read %s in VM %s: %w", osReleasePath, vmName, connectionErr)
 		}
 		detail := processOutput(result)
@@ -147,8 +158,8 @@ func readGuestOSRelease(project string, vmName string, limactlCommand string, co
 	return osRelease, nil
 }
 
-func packageBackendForGuest(project string, vmName string, limactlCommand string, contexts ...context.Context) (guestPackageBackend, error) {
-	osRelease, err := readGuestOSRelease(project, vmName, limactlCommand, contexts...)
+func packageBackendForGuest(project, vmName string, options processOptions) (guestPackageBackend, error) {
+	osRelease, err := readGuestOSRelease(project, vmName, options)
 	if err != nil {
 		return guestPackageBackend{}, err
 	}
@@ -157,7 +168,7 @@ func packageBackendForGuest(project string, vmName string, limactlCommand string
 		return guestPackageBackend{}, ljaError("cannot select package backend for VM %s: %w", vmName, err)
 	}
 	for _, tool := range backend.requiredTools {
-		available, probeErr := guestExecutableAvailable(project, vmName, tool, limactlCommand, contexts...)
+		available, probeErr := guestExecutableAvailable(project, vmName, tool, options)
 		if probeErr != nil {
 			return guestPackageBackend{}, ljaError("cannot verify %s package backend tool %s in VM %s: %w", backend.name, tool, vmName, probeErr)
 		}
@@ -173,7 +184,7 @@ func (backend guestPackageBackend) queryArguments(packageName string) []string {
 	case fedoraPackageBackend:
 		return []string{backend.queryCommand, "-q", "--whatprovides", packageName}
 	default:
-		return []string{backend.queryCommand, "--show", "--showformat=${Status}", packageName}
+		return []string{backend.queryCommand, dpkgShowFlag, "--showformat=${Status}", packageName}
 	}
 }
 
@@ -204,16 +215,16 @@ func (backend guestPackageBackend) packageIsMissing(result ProcessResult) bool {
 	}
 }
 
-func (backend guestPackageBackend) queryPackage(project string, vmName string, packageName string, limactlCommand string, contexts ...context.Context) (bool, error) {
+func (backend guestPackageBackend) queryPackage(options guestPackageOptions, packageName string) (bool, error) {
 	if err := backend.validatePackageName(packageName); err != nil {
-		return false, ljaError("cannot query dependency %s with %s backend in VM %s: %w", packageName, backend.name, vmName, err)
+		return false, ljaError("cannot query dependency %s with %s backend in VM %s: %w", packageName, backend.name, options.vmName, err)
 	}
-	options := defaultProcessOptions(limactlCommand, contexts...)
-	options.captureOutput = true
-	options.check = false
-	result, err := runGuest(project, vmName, backend.queryArguments(packageName), options, nil)
+	processOptions := defaultProcessOptions(options.limactlCommand, options.contexts...)
+	processOptions.captureOutput = true
+	processOptions.check = false
+	result, err := runGuest(options.project, options.vmName, backend.queryArguments(packageName), guestExecution(processOptions, nil))
 	if err != nil {
-		return false, ljaError("cannot query dependency %s with %s backend in VM %s: %w", packageName, backend.name, vmName, err)
+		return false, ljaError("cannot query dependency %s with %s backend in VM %s: %w", packageName, backend.name, options.vmName, err)
 	}
 	if result.ExitCode == 0 {
 		if backend.name == ubuntuDebianPackageBackend {
@@ -222,19 +233,19 @@ func (backend guestPackageBackend) queryPackage(project string, vmName string, p
 		return true, nil
 	}
 	if backend.packageIsMissing(result) {
-		if connectionErr := verifyGuestConnection(project, vmName, limactlCommand, contexts...); connectionErr != nil {
-			return false, ljaError("cannot query dependency %s with %s backend in VM %s: %w", packageName, backend.name, vmName, connectionErr)
+		if connectionErr := verifyGuestConnection(options.project, options.vmName, processOptions); connectionErr != nil {
+			return false, ljaError("cannot query dependency %s with %s backend in VM %s: %w", packageName, backend.name, options.vmName, connectionErr)
 		}
 		return false, nil
 	}
-	if connectionErr := verifyGuestConnection(project, vmName, limactlCommand, contexts...); connectionErr != nil {
-		return false, ljaError("cannot query dependency %s with %s backend in VM %s: %w", packageName, backend.name, vmName, connectionErr)
+	if connectionErr := verifyGuestConnection(options.project, options.vmName, processOptions); connectionErr != nil {
+		return false, ljaError("cannot query dependency %s with %s backend in VM %s: %w", packageName, backend.name, options.vmName, connectionErr)
 	}
 	detail := processOutput(result)
 	if detail != "" {
-		return false, ljaError("package database query failed for dependency %s with %s backend in VM %s: exit status %d: %s", packageName, backend.name, vmName, result.ExitCode, detail)
+		return false, ljaError("package database query failed for dependency %s with %s backend in VM %s: exit status %d: %s", packageName, backend.name, options.vmName, result.ExitCode, detail)
 	}
-	return false, ljaError("package database query failed for dependency %s with %s backend in VM %s: exit status %d", packageName, backend.name, vmName, result.ExitCode)
+	return false, ljaError("package database query failed for dependency %s with %s backend in VM %s: exit status %d", packageName, backend.name, options.vmName, result.ExitCode)
 }
 
 func guestPackageInstallationScript(packageNames []string) string {
@@ -255,21 +266,21 @@ func guestPackageInstallationScript(packageNames []string) string {
 
 func (backend guestPackageBackend) installArguments(packageNames []string) []string {
 	if backend.name == ubuntuDebianPackageBackend {
-		return []string{shellCommand, "-eu", shellCommandFlag, guestPackageInstallationScript(packageNames)}
+		return []string{shellCommand, shellStrictFlag, shellCommandFlag, guestPackageInstallationScript(packageNames)}
 	}
 	arguments := []string{sudoCommand, backend.installCommand, installCommand, "-y"}
 	return append(arguments, packageNames...)
 }
 
-func (backend guestPackageBackend) installPackages(project string, vmName string, packageNames []string, limactlCommand string, contexts ...context.Context) error {
+func (backend guestPackageBackend) installPackages(options guestPackageOptions, packageNames []string) error {
 	for _, packageName := range packageNames {
 		if err := backend.validatePackageName(packageName); err != nil {
-			return ljaError("cannot install dependency %s with %s backend in VM %s: %w", packageName, backend.name, vmName, err)
+			return ljaError("cannot install dependency %s with %s backend in VM %s: %w", packageName, backend.name, options.vmName, err)
 		}
 	}
-	options := defaultProcessOptions(limactlCommand, contexts...)
-	if _, err := runGuest(project, vmName, backend.installArguments(packageNames), options, nil); err != nil {
-		return ljaError("cannot install dependencies %s with %s backend in VM %s: %w", strings.Join(packageNames, ", "), backend.name, vmName, err)
+	processOptions := defaultProcessOptions(options.limactlCommand, options.contexts...)
+	if _, err := runGuest(options.project, options.vmName, backend.installArguments(packageNames), guestExecution(processOptions, nil)); err != nil {
+		return ljaError("cannot install dependencies %s with %s backend in VM %s: %w", strings.Join(packageNames, ", "), backend.name, options.vmName, err)
 	}
 	return nil
 }
@@ -292,10 +303,10 @@ func (backend guestPackageBackend) nodePackageNames() []string {
 	return append([]string{}, backend.nodePackages...)
 }
 
-func ensureGuestPackagesWithBackend(project string, vmName string, packageNames []string, backend guestPackageBackend, limactlCommand string, contexts ...context.Context) error {
+func ensureGuestPackagesWithBackend(options guestPackageOptions, packageNames []string, backend guestPackageBackend) error {
 	missing := make([]string, 0, len(packageNames))
 	for _, packageName := range packageNames {
-		installed, queryErr := backend.queryPackage(project, vmName, packageName, limactlCommand, contexts...)
+		installed, queryErr := backend.queryPackage(options, packageName)
 		if queryErr != nil {
 			return queryErr
 		}
@@ -307,38 +318,39 @@ func ensureGuestPackagesWithBackend(project string, vmName string, packageNames 
 		return nil
 	}
 
-	slog.Info("installing packages", "backend", backend.name, "packages", missing, "vm", vmName)
-	if err := backend.installPackages(project, vmName, missing, limactlCommand, contexts...); err != nil {
+	slog.Info("installing packages", "backend", backend.name, "packages", missing, "vm", options.vmName)
+	if err := backend.installPackages(options, missing); err != nil {
 		return err
 	}
 	for _, packageName := range missing {
-		installed, queryErr := backend.queryPackage(project, vmName, packageName, limactlCommand, contexts...)
+		installed, queryErr := backend.queryPackage(options, packageName)
 		if queryErr != nil {
 			return queryErr
 		}
 		if !installed {
-			return ljaError("cannot verify dependency %s with %s backend in VM %s: installation did not provide the requested package", packageName, backend.name, vmName)
+			return ljaError("cannot verify dependency %s with %s backend in VM %s: installation did not provide the requested package", packageName, backend.name, options.vmName)
 		}
 	}
 	return nil
 }
 
-func ensureDevelopmentPackages(project string, vmName string, config DevelopmentConfig, limactlCommand string) (guestPackageBackend, error) {
+func ensureDevelopmentPackages(options guestPackageOptions, config DevelopmentConfig) (guestPackageBackend, error) {
 	if len(config.Packages) == 0 && !config.GPGForwarding && !config.CopyGitConfig && !config.GitHub.Enabled {
 		return guestPackageBackend{}, nil
 	}
-	backend, err := packageBackendForGuest(project, vmName, limactlCommand)
+	guestOptions := defaultProcessOptions(options.limactlCommand, options.contexts...)
+	backend, err := packageBackendForGuest(options.project, options.vmName, guestOptions)
 	if err != nil {
-		return guestPackageBackend{}, ljaError("cannot prepare dependencies in VM %s: %w", vmName, err)
+		return guestPackageBackend{}, ljaError("cannot prepare dependencies in VM %s: %w", options.vmName, err)
 	}
 	packageNames := backend.developmentPackageNames(config)
-	if err := ensureGuestPackagesWithBackend(project, vmName, packageNames, backend, limactlCommand); err != nil {
+	if err := ensureGuestPackagesWithBackend(options, packageNames, backend); err != nil {
 		return guestPackageBackend{}, err
 	}
 	return backend, nil
 }
 
-func verifyDevelopmentExecutables(project string, vmName string, config DevelopmentConfig, backend guestPackageBackend, limactlCommand string) error {
+func verifyDevelopmentExecutables(options guestPackageOptions, config DevelopmentConfig, backend guestPackageBackend) error {
 	executables := make([]string, 0, 5)
 	if config.CopyGitConfig {
 		executables = append(executables, gitCommand)
@@ -350,34 +362,15 @@ func verifyDevelopmentExecutables(project string, vmName string, config Developm
 		executables = append(executables, gpgCommand, gpgConfCommand)
 	}
 	executables = uniqueStrings(executables)
+	guestOptions := defaultProcessOptions(options.limactlCommand, options.contexts...)
 	for _, executable := range executables {
-		available, err := guestExecutableAvailable(project, vmName, executable, limactlCommand)
+		available, err := guestExecutableAvailable(options.project, options.vmName, executable, guestOptions)
 		if err != nil {
-			return ljaError("cannot verify required executable %s with %s backend in VM %s: %w", executable, backend.name, vmName, err)
+			return ljaError("cannot verify required executable %s with %s backend in VM %s: %w", executable, backend.name, options.vmName, err)
 		}
 		if !available {
-			return ljaError("required executable %s is missing with %s backend in VM %s", executable, backend.name, vmName)
+			return ljaError("required executable %s is missing with %s backend in VM %s", executable, backend.name, options.vmName)
 		}
 	}
 	return nil
-}
-
-func guestPackageInstalled(project string, vmName string, packageName string, limactlCommand string) (bool, error) {
-	backend, err := packageBackendForGuest(project, vmName, limactlCommand)
-	if err != nil {
-		return false, err
-	}
-	return backend.queryPackage(project, vmName, packageName, limactlCommand)
-}
-
-func ensureGuestPackages(project string, vmName string, packageNames []string, limactlCommand string) error {
-	packageNames = uniqueStrings(packageNames)
-	if len(packageNames) == 0 {
-		return nil
-	}
-	backend, err := packageBackendForGuest(project, vmName, limactlCommand)
-	if err != nil {
-		return ljaError("cannot prepare dependencies %s in VM %s: %w", strings.Join(packageNames, ", "), vmName, err)
-	}
-	return ensureGuestPackagesWithBackend(project, vmName, packageNames, backend, limactlCommand)
 }

@@ -103,13 +103,13 @@ func (options *WorkflowOptions) ownGitHubWorkflow() (func(*error), error) {
 		return nil, err
 	}
 	options.github = workflow
-	return func(result *error) {
+	return func(_ *error) {
 		workflow.close()
 		stop()
 	}, nil
 }
 
-func validateGitHubToken(value string, source string, allowTrailingLineEnding bool) (string, error) {
+func validateGitHubToken(value, source string, allowTrailingLineEnding bool) (string, error) {
 	if allowTrailingLineEnding {
 		switch {
 		case strings.HasSuffix(value, "\r\n"):
@@ -163,8 +163,7 @@ func runGitHubTokenCommand(ctx context.Context, command []string, hostHome strin
 		return "", ljaError("GitHub token command %q timed out after %s", commandPath, githubTokenTimeout)
 	}
 	if runErr != nil {
-		var exitError *exec.ExitError
-		if errors.As(runErr, &exitError) {
+		if exitError, ok := errors.AsType[*exec.ExitError](runErr); ok {
 			return "", ljaError("GitHub token command %q failed with exit status %d", commandPath, exitError.ExitCode())
 		}
 		return "", ljaError("cannot execute GitHub token command %q: %w", commandPath, runErr)

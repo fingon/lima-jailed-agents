@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -115,6 +116,84 @@ type WorkflowOptions struct {
 	agentUpdateName       string
 }
 
+type agentInstallationOptions struct {
+	project        string
+	vmName         string
+	agent          AgentSpec
+	update         bool
+	limactlCommand string
+	contexts       []context.Context
+}
+
+type developmentPreparationOptions struct {
+	project        string
+	vmName         string
+	config         *DevelopmentConfig
+	environment    map[string]string
+	limactlCommand string
+	gpg            *gpgWorkflow
+	github         *githubWorkflow
+}
+
+type agentPreparationOptions struct {
+	project          string
+	vmName           string
+	stateRoot        string
+	development      *DevelopmentConfig
+	trustDirectories []string
+	lockDirectory    string
+	limactlCommand   string
+	updateAgentName  string
+	prepareWrappers  bool
+	contexts         []context.Context
+}
+
+type AgentRunOptions struct {
+	AgentName        string
+	Arguments        []string
+	WithAgents       []string
+	WorkingDirectory string
+	Workflow         WorkflowOptions
+}
+
+type AgentWrapperOptions struct {
+	Project     string
+	VMName      string
+	StateRoot   string
+	Executables []AgentExecutable
+	LimaCommand string
+}
+
+type AgentPreparationOptions struct {
+	Project          string
+	SelectedAgent    string
+	WithAgents       []string
+	TrustDirectories []string
+	Workflow         WorkflowOptions
+}
+
+func workflowContexts(workflow *gpgWorkflow) []context.Context {
+	if workflow == nil {
+		return nil
+	}
+	return []context.Context{workflow.context()}
+}
+
+func (options WorkflowOptions) agentPreparation(project, vmName string, prepareWrappers bool, updateAgentName string) agentPreparationOptions {
+	return agentPreparationOptions{
+		project:          project,
+		vmName:           vmName,
+		stateRoot:        options.StateRoot,
+		development:      options.Development,
+		trustDirectories: options.agentTrustDirectories,
+		lockDirectory:    options.LockDirectory,
+		limactlCommand:   options.limaCommand(),
+		updateAgentName:  updateAgentName,
+		prepareWrappers:  prepareWrappers,
+		contexts:         workflowContexts(options.gpg),
+	}
+}
+
 func (options WorkflowOptions) limaCommand() string {
 	if options.LimaCommand == "" {
 		return limaCtlCommand
@@ -156,23 +235,22 @@ func effectiveDevelopmentPackages(config DevelopmentConfig) []string {
 	return (guestPackageBackend{gitPackage: gitCommand, ghPackage: ghCommand, gpgPackage: gpgPackage}).developmentPackageNames(config)
 }
 
-func guestExecutableVersion(project string, vmName string, executable string, limactlCommand string, contexts ...context.Context) (string, string, error) {
-	executablePath, err := guestExecutablePath(project, vmName, executable, limactlCommand, contexts...)
+func guestExecutableVersion(project, vmName, executable string, options processOptions) (string, string, error) {
+	executablePath, err := guestExecutablePath(project, vmName, executable, options)
 	if err != nil {
 		return "", "", err
 	}
 	if executablePath == "" {
 		return "", "", nil
 	}
-	options := defaultProcessOptions(limactlCommand, contexts...)
 	options.captureOutput = true
 	options.check = false
-	result, err := runGuest(project, vmName, []string{executable, versionFlag}, options, nil)
+	result, err := runGuest(project, vmName, []string{executable, versionFlag}, guestExecution(options, nil))
 	if err != nil {
 		return "", "", ljaError("cannot run guest executable %s in VM %s: %w", executable, vmName, err)
 	}
 	if result.ExitCode != 0 {
-		if connectionErr := verifyGuestConnection(project, vmName, limactlCommand, contexts...); connectionErr != nil {
+		if connectionErr := verifyGuestConnection(project, vmName, options); connectionErr != nil {
 			return "", "", ljaError("guest executable %s is present but failed in VM %s: %w", executable, vmName, connectionErr)
 		}
 		detail := processOutput(result)
@@ -191,31 +269,33 @@ func guestExecutableVersion(project string, vmName string, executable string, li
 	return executablePath, version, nil
 }
 
-func nodeRuntimeDescription(project string, vmName string, limactlCommand string, contexts ...context.Context) (string, error) {
-	_, nodeVersion, err := guestExecutableVersion(project, vmName, nodeCommand, limactlCommand, contexts...)
+func nodeRuntimeDescription(project, vmName, limactlCommand string, contexts ...context.Context) (string, error) {
+	options := defaultProcessOptions(limactlCommand, contexts...)
+	_, nodeVersion, err := guestExecutableVersion(project, vmName, nodeCommand, options)
 	if err != nil {
 		return "", err
 	}
-	_, npmVersion, err := guestExecutableVersion(project, vmName, npmCommand, limactlCommand, contexts...)
+	_, npmVersion, err := guestExecutableVersion(project, vmName, npmCommand, options)
 	if err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("node=%s npm=%s", nodeVersion, npmVersion), nil
 }
 
-func ensureNodeRuntime(project string, vmName string, limactlCommand string, contexts ...context.Context) error {
-	nodePath, _, err := guestExecutableVersion(project, vmName, nodeCommand, limactlCommand, contexts...)
+func ensureNodeRuntime(project, vmName, limactlCommand string, contexts ...context.Context) error {
+	guestOptions := defaultProcessOptions(limactlCommand, contexts...)
+	nodePath, _, err := guestExecutableVersion(project, vmName, nodeCommand, guestOptions)
 	if err != nil {
 		return err
 	}
-	npmPath, _, err := guestExecutableVersion(project, vmName, npmCommand, limactlCommand, contexts...)
+	npmPath, _, err := guestExecutableVersion(project, vmName, npmCommand, guestOptions)
 	if err != nil {
 		return err
 	}
 	if nodePath != "" && npmPath != "" {
 		return nil
 	}
-	backend, err := packageBackendForGuest(project, vmName, limactlCommand, contexts...)
+	backend, err := packageBackendForGuest(project, vmName, guestOptions)
 	if err != nil {
 		return ljaError("cannot prepare Node runtime in VM %s: %w", vmName, err)
 	}
@@ -224,11 +304,17 @@ func ensureNodeRuntime(project string, vmName string, limactlCommand string, con
 		return ljaError("%s backend has no Node runtime dependencies for VM %s", backend.name, vmName)
 	}
 	slog.Info("installing Node runtime", "backend", backend.name, "packages", packages, "vm", vmName)
-	if err := ensureGuestPackagesWithBackend(project, vmName, packages, backend, limactlCommand, contexts...); err != nil {
+	packageOptions := guestPackageOptions{
+		project:        project,
+		vmName:         vmName,
+		limactlCommand: limactlCommand,
+		contexts:       contexts,
+	}
+	if err := ensureGuestPackagesWithBackend(packageOptions, packages, backend); err != nil {
 		return err
 	}
 	for _, executable := range []string{nodeCommand, npmCommand} {
-		path, _, probeErr := guestExecutableVersion(project, vmName, executable, limactlCommand, contexts...)
+		path, _, probeErr := guestExecutableVersion(project, vmName, executable, guestOptions)
 		if probeErr != nil {
 			return probeErr
 		}
@@ -244,56 +330,57 @@ func npmEngineFailure(output string) bool {
 	return strings.Contains(lower, "ebadengine") || strings.Contains(lower, "unsupported engine") || (strings.Contains(lower, "engine") && strings.Contains(lower, "node"))
 }
 
-func installAgentPackage(project string, vmName string, agent AgentSpec, limactlCommand string, contexts ...context.Context) error {
-	slog.Info("installing agent", "agent", agent.Name, "package", agent.Package, "vm", vmName)
-	options := defaultProcessOptions(limactlCommand, contexts...)
-	options.captureOutput = true
-	options.check = false
-	result, err := runGuest(project, vmName, []string{sudoCommand, npmCommand, installCommand, npmEngineStrictFlag, npmGlobalFlag, agent.Package}, options, nil)
+func installAgentPackage(options agentInstallationOptions) error {
+	slog.Info("installing agent", "agent", options.agent.Name, "package", options.agent.Package, "vm", options.vmName)
+	guestOptions := defaultProcessOptions(options.limactlCommand, options.contexts...)
+	guestOptions.captureOutput = true
+	guestOptions.check = false
+	result, err := runGuest(options.project, options.vmName, []string{sudoCommand, npmCommand, installCommand, npmEngineStrictFlag, npmGlobalFlag, options.agent.Package}, guestExecution(guestOptions, nil))
 	if err != nil {
-		return ljaError("cannot install agent package %s in VM %s: %w", agent.Package, vmName, err)
+		return ljaError("cannot install agent package %s in VM %s: %w", options.agent.Package, options.vmName, err)
 	}
 	if result.ExitCode == 0 {
 		return nil
 	}
 	detail := processOutput(result)
-	runtime, runtimeErr := nodeRuntimeDescription(project, vmName, limactlCommand, contexts...)
+	runtime, runtimeErr := nodeRuntimeDescription(options.project, options.vmName, options.limactlCommand, options.contexts...)
 	if runtimeErr != nil {
 		runtime = fmt.Sprintf("runtime version lookup failed: %v", runtimeErr)
 	}
 	if npmEngineFailure(detail) {
-		return ljaError("cannot install agent package %s in VM %s: npm engine requirements are incompatible with guest runtime (%s); select a newer template or use custom provisioning through setup or lima.provision to install a compatible system-wide Node runtime: %s", agent.Package, vmName, runtime, detail)
+		return ljaError("cannot install agent package %s in VM %s: npm engine requirements are incompatible with guest runtime (%s); select a newer template or use custom provisioning through setup or lima.provision to install a compatible system-wide Node runtime: %s", options.agent.Package, options.vmName, runtime, detail)
 	}
 	if detail != "" {
-		return ljaError("cannot install agent package %s in VM %s with guest runtime (%s): exit status %d: %s", agent.Package, vmName, runtime, result.ExitCode, detail)
+		return ljaError("cannot install agent package %s in VM %s with guest runtime (%s): exit status %d: %s", options.agent.Package, options.vmName, runtime, result.ExitCode, detail)
 	}
-	return ljaError("cannot install agent package %s in VM %s with guest runtime (%s): exit status %d", agent.Package, vmName, runtime, result.ExitCode)
+	return ljaError("cannot install agent package %s in VM %s with guest runtime (%s): exit status %d", options.agent.Package, options.vmName, runtime, result.ExitCode)
 }
 
-func installAgentLocked(project string, vmName string, agent AgentSpec, update bool, limactlCommand string, contexts ...context.Context) (string, error) {
-	if err := verifyGuestConnection(project, vmName, limactlCommand, contexts...); err != nil {
+func installAgentLocked(options agentInstallationOptions) (string, error) {
+	guestOptions := defaultProcessOptions(options.limactlCommand, options.contexts...)
+	if err := verifyGuestConnection(options.project, options.vmName, guestOptions); err != nil {
 		return "", err
 	}
-	executablePath, err := guestExecutablePath(project, vmName, agent.Executable, limactlCommand, contexts...)
+	executablePath, err := guestExecutablePath(options.project, options.vmName, options.agent.Executable, guestOptions)
 	if err != nil {
 		return "", err
 	}
-	if executablePath != "" && !update {
-		slog.Debug("reusing installed agent", "agent", agent.Name, "vm", vmName)
+	if executablePath != "" && !options.update {
+		slog.Debug("reusing installed agent", "agent", options.agent.Name, "vm", options.vmName)
 		return executablePath, nil
 	}
-	if err := ensureNodeRuntime(project, vmName, limactlCommand, contexts...); err != nil {
+	if err := ensureNodeRuntime(options.project, options.vmName, options.limactlCommand, options.contexts...); err != nil {
 		return "", err
 	}
-	if err := installAgentPackage(project, vmName, agent, limactlCommand, contexts...); err != nil {
+	if err := installAgentPackage(options); err != nil {
 		return "", err
 	}
-	executablePath, err = guestExecutablePath(project, vmName, agent.Executable, limactlCommand, contexts...)
+	executablePath, err = guestExecutablePath(options.project, options.vmName, options.agent.Executable, guestOptions)
 	if err != nil {
 		return "", err
 	}
 	if executablePath == "" {
-		return "", ljaError("agent package %s installed but guest executable %s is missing in VM %s", agent.Package, agent.Executable, vmName)
+		return "", ljaError("agent package %s installed but guest executable %s is missing in VM %s", options.agent.Package, options.agent.Executable, options.vmName)
 	}
 	return executablePath, nil
 }
@@ -306,23 +393,29 @@ func workflowProcessOptions(limactlCommand string, gpg *gpgWorkflow, github *git
 	return options
 }
 
-func prepareDevelopment(project string, vmName string, config *DevelopmentConfig, environment map[string]string, limactlCommand string, gpg *gpgWorkflow, github *githubWorkflow) (returnErr error) {
-	actualConfig := developmentConfigOrDefault(config)
-	workflow := gpg
+func prepareDevelopment(options developmentPreparationOptions) (returnErr error) {
+	actualConfig := developmentConfigOrDefault(options.config)
+	workflow := options.gpg
+	environment := options.environment
 	if actualConfig.GPGForwarding && workflow == nil {
-		options := WorkflowOptions{Development: &actualConfig, Environment: environment}
-		cleanup, err := options.ownGPGWorkflow()
+		workflowOptions := WorkflowOptions{Development: &actualConfig, Environment: environment}
+		cleanup, err := workflowOptions.ownGPGWorkflow()
 		if err != nil {
 			return err
 		}
 		defer cleanup(&returnErr)
-		workflow = options.gpg
+		workflow = workflowOptions.gpg
 	}
-	backend, err := ensureDevelopmentPackages(project, vmName, actualConfig, limactlCommand)
+	packageOptions := guestPackageOptions{
+		project:        options.project,
+		vmName:         options.vmName,
+		limactlCommand: options.limactlCommand,
+	}
+	backend, err := ensureDevelopmentPackages(packageOptions, actualConfig)
 	if err != nil {
 		return err
 	}
-	if err := verifyDevelopmentExecutables(project, vmName, actualConfig, backend, limactlCommand); err != nil {
+	if err := verifyDevelopmentExecutables(packageOptions, actualConfig, backend); err != nil {
 		return err
 	}
 	if actualConfig.CopyGitConfig {
@@ -330,22 +423,22 @@ func prepareDevelopment(project string, vmName string, config *DevelopmentConfig
 		if actualConfig.GitHub.Enabled {
 			prepareGitFunction = prepareGitWithGitHub
 		}
-		if err := prepareGitFunction(project, vmName, limactlCommand, actualConfig.GPGForwarding); err != nil {
+		if err := prepareGitFunction(options.project, options.vmName, options.limactlCommand, actualConfig.GPGForwarding); err != nil {
 			return err
 		}
 	}
-	environment, err = workflow.environment(project, vmName, limactlCommand, environment)
+	environment, err = workflow.environment(options.project, options.vmName, options.limactlCommand, environment)
 	if err != nil {
 		return err
 	}
-	environment, err = github.environment(environment)
+	environment, err = options.github.environment(environment)
 	if err != nil {
 		return err
 	}
 	for _, setup := range actualConfig.Setup {
-		slog.Info("running setup", "source", setup.Source, "command_index", setup.Index, "vm", vmName)
-		options := workflowProcessOptions(limactlCommand, workflow, github)
-		if _, err := runGuest(project, vmName, []string{shellCommand, "-eu", shellCommandFlag, setup.Command}, options, environment); err != nil {
+		slog.Info("running setup", "source", setup.Source, "command_index", setup.Index, "vm", options.vmName)
+		processOptions := workflowProcessOptions(options.limactlCommand, workflow, options.github)
+		if _, err := runGuest(options.project, options.vmName, []string{shellCommand, shellStrictFlag, shellCommandFlag, setup.Command}, guestExecution(processOptions, environment)); err != nil {
 			return ljaError("setup %s command %d failed: %w", setup.Source, setup.Index, err)
 		}
 	}
@@ -376,7 +469,12 @@ func PrepareVM(project string, options WorkflowOptions) (returnedInstance LimaIn
 		return LimaInstance{}, err
 	}
 	returnValue := LimaInstance{}
-	lockErr := withAdvisoryLock(canonicalProject, vmName, options.StateRoot, options.LockDirectory, func(string) error {
+	lockErr := withAdvisoryLock(AdvisoryLockOptions{
+		Project:       canonicalProject,
+		VMName:        vmName,
+		StateRoot:     options.StateRoot,
+		LockDirectory: options.LockDirectory,
+	}, func(string) error {
 		instance, prepareErr := options.prepareVMLocked(canonicalProject, vmName)
 		if prepareErr != nil {
 			return prepareErr
@@ -390,7 +488,7 @@ func PrepareVM(project string, options WorkflowOptions) (returnedInstance LimaIn
 	return returnValue, nil
 }
 
-func InstallAgent(project string, agentName string, update bool, options WorkflowOptions) (returnedInstance LimaInstance, returnErr error) {
+func InstallAgent(project, agentName string, update bool, options WorkflowOptions) (returnedInstance LimaInstance, returnErr error) {
 	cleanup, err := options.ownGPGWorkflow()
 	if err != nil {
 		return LimaInstance{}, err
@@ -429,13 +527,25 @@ func InstallAgent(project string, agentName string, update bool, options Workflo
 		return LimaInstance{}, err
 	}
 	returnValue := LimaInstance{}
-	lockErr := withAdvisoryLock(canonicalProject, vmName, options.StateRoot, options.LockDirectory, func(string) error {
+	lockErr := withAdvisoryLock(AdvisoryLockOptions{
+		Project:       canonicalProject,
+		VMName:        vmName,
+		StateRoot:     options.StateRoot,
+		LockDirectory: options.LockDirectory,
+	}, func(string) error {
 		instance, prepareErr := options.prepareVMLocked(canonicalProject, vmName)
 		if prepareErr != nil {
 			return prepareErr
 		}
 		if !configuredAgents[agentName] {
-			if _, installErr := installAgentLocked(canonicalProject, vmName, agent, update, options.limaCommand(), options.gpg.context()); installErr != nil {
+			if _, installErr := installAgentLocked(agentInstallationOptions{
+				project:        canonicalProject,
+				vmName:         vmName,
+				agent:          agent,
+				update:         update,
+				limactlCommand: options.limaCommand(),
+				contexts:       workflowContexts(options.gpg),
+			}); installErr != nil {
 				return installErr
 			}
 		}
@@ -479,17 +589,18 @@ func permissionOptionPatterns(agentName string) []string {
 	return patterns
 }
 
-func orderedAgentEnvironment(stateRoot string, agentName string) ([][2]string, error) {
+func orderedAgentEnvironment(stateRoot, agentName string) ([][2]string, error) {
 	values, err := agentStateEnvironment(stateRoot, agentName)
 	if err != nil {
 		return nil, err
 	}
-	order := []string{}
-	if agentName == codexAgentName {
+	var order []string
+	switch agentName {
+	case codexAgentName:
 		order = []string{codeXHomeEnvironment}
-	} else if agentName == claudeAgentName {
+	case claudeAgentName:
 		order = []string{claudeConfigEnvironment}
-	} else {
+	default:
 		order = []string{openCodeConfigEnvironment, xdgConfigHomeEnv, xdgDataHomeEnv, xdgStateHomeEnv, xdgCacheHomeEnv}
 	}
 	entries := make([][2]string, 0, len(order)+1)
@@ -502,7 +613,7 @@ func orderedAgentEnvironment(stateRoot string, agentName string) ([][2]string, e
 	return entries, nil
 }
 
-func agentWrapperContent(stateRoot string, agentName string, executablePath string) (string, error) {
+func agentWrapperContent(stateRoot, agentName, executablePath string) (string, error) {
 	agent, err := agentSpec(agentName)
 	if err != nil {
 		return "", err
@@ -513,7 +624,7 @@ func agentWrapperContent(stateRoot string, agentName string, executablePath stri
 	}
 	lines := []string{
 		"#!/bin/sh",
-		"set -eu",
+		shellStrictScript,
 		"unset " + strings.Join(agentStateEnvironmentNames, " "),
 	}
 	for _, entry := range environment {
@@ -557,11 +668,11 @@ func agentWrapperContent(stateRoot string, agentName string, executablePath stri
 	return strings.Join(lines, "\n") + "\n", nil
 }
 
-func AgentWrapperContent(stateRoot string, agentName string, executablePath string) (string, error) {
+func AgentWrapperContent(stateRoot, agentName, executablePath string) (string, error) {
 	return agentWrapperContent(stateRoot, agentName, executablePath)
 }
 
-func agentWrapperSetupScript(stateRoot string, vmName string, executables []AgentExecutable) (string, error) {
+func agentWrapperSetupScript(stateRoot, vmName string, executables []AgentExecutable) (string, error) {
 	if len(executables) == 0 {
 		return "", ljaError("cannot prepare agent wrappers without requested agents")
 	}
@@ -574,7 +685,7 @@ func agentWrapperSetupScript(stateRoot string, vmName string, executables []Agen
 	}
 	wrapperDirectory := agentWrapperDirectory(vmName)
 	lines := []string{
-		"set -eu",
+		shellStrictScript,
 		"temporary_path=",
 		"cleanup() {",
 		"    if [ -n \"$temporary_path\" ]; then",
@@ -602,74 +713,85 @@ func agentWrapperSetupScript(stateRoot string, vmName string, executables []Agen
 			"printf '%s' "+shellQuote(content)+" > \"$temporary_path\"",
 			"chmod 700 \"$temporary_path\"",
 			"mv -f -- \"$temporary_path\" "+shellQuote(wrapperPath),
-			"temporary_path=",
+			temporaryPathAssignment,
 		)
 	}
 	return strings.Join(lines, "\n") + "\n", nil
 }
 
-func PrepareAgentWrappers(project string, vmName string, stateRoot string, executables []AgentExecutable, limactlCommand string) error {
-	script, err := agentWrapperSetupScript(stateRoot, vmName, executables)
+func PrepareAgentWrappers(wrapperOptions AgentWrapperOptions) error {
+	script, err := agentWrapperSetupScript(wrapperOptions.StateRoot, wrapperOptions.VMName, wrapperOptions.Executables)
 	if err != nil {
 		return err
 	}
-	options := defaultProcessOptions(limactlCommand)
-	_, err = runGuest(project, vmName, []string{shellCommand, shellCommandFlag, script}, options, nil)
+	processOptions := defaultProcessOptions(wrapperOptions.LimaCommand)
+	_, err = runGuest(wrapperOptions.Project, wrapperOptions.VMName, []string{shellCommand, shellCommandFlag, script}, guestExecution(processOptions, nil))
 	return err
 }
 
-func prepareAgentNamesLocked(project string, vmName string, stateRoot string, agentNames []string, trustDirectories []string, lockDirectory string, limactlCommand string, prepareWrappers bool, updateAgentName string, contexts ...context.Context) error {
+func prepareAgentNamesLocked(options agentPreparationOptions, agentNames []string) error {
+	stateRoot := options.stateRoot
 	if stateRoot == "" {
-		stateRoot = project
+		stateRoot = options.project
 	}
 	executables := make([]AgentExecutable, 0, len(agentNames))
 	codexRequested := false
 	for _, agentName := range agentNames {
 		agent, err := agentSpec(agentName)
 		if err != nil {
-			return ljaError("cannot prepare agent %s in VM %s: %w", agentName, vmName, err)
+			return ljaError("cannot prepare agent %s in VM %s: %w", agentName, options.vmName, err)
 		}
-		executablePath, err := installAgentLocked(project, vmName, agent, agentName == updateAgentName, limactlCommand, contexts...)
+		executablePath, err := installAgentLocked(agentInstallationOptions{
+			project:        options.project,
+			vmName:         options.vmName,
+			agent:          agent,
+			update:         agentName == options.updateAgentName,
+			limactlCommand: options.limactlCommand,
+			contexts:       options.contexts,
+		})
 		if err != nil {
-			return ljaError("cannot prepare agent %s in VM %s: %w", agentName, vmName, err)
+			return ljaError("cannot prepare agent %s in VM %s: %w", agentName, options.vmName, err)
 		}
 		if _, err := EnsureAgentStateDirectories(stateRoot, agentName); err != nil {
-			return ljaError("cannot prepare agent %s in VM %s: %w", agentName, vmName, err)
+			return ljaError("cannot prepare agent %s in VM %s: %w", agentName, options.vmName, err)
 		}
 		if _, err := RefreshAgentInstructions(stateRoot, agentName, nil); err != nil {
-			return ljaError("cannot prepare agent %s in VM %s: %w", agentName, vmName, err)
+			return ljaError("cannot prepare agent %s in VM %s: %w", agentName, options.vmName, err)
 		}
 		if agentName == codexAgentName {
 			codexRequested = true
 		}
 		executables = append(executables, AgentExecutable{Name: agentName, Path: executablePath})
 	}
-	if codexRequested && len(trustDirectories) != 0 {
-		if err := ensureCodexDirectoryTrust(stateRoot, trustDirectories, lockDirectory); err != nil {
-			return ljaError("cannot prepare agent %s in VM %s: %w", codexAgentName, vmName, err)
+	if codexRequested && len(options.trustDirectories) != 0 {
+		if err := ensureCodexDirectoryTrust(stateRoot, options.trustDirectories, options.lockDirectory); err != nil {
+			return ljaError("cannot prepare agent %s in VM %s: %w", codexAgentName, options.vmName, err)
 		}
 	}
-	if prepareWrappers && len(executables) != 0 {
-		if err := PrepareAgentWrappers(project, vmName, stateRoot, executables, limactlCommand); err != nil {
-			return ljaError("cannot prepare agent wrappers in VM %s: %w", vmName, err)
+	if options.prepareWrappers && len(executables) != 0 {
+		if err := PrepareAgentWrappers(AgentWrapperOptions{
+			Project:     options.project,
+			VMName:      options.vmName,
+			StateRoot:   stateRoot,
+			Executables: executables,
+			LimaCommand: options.limactlCommand,
+		}); err != nil {
+			return ljaError("cannot prepare agent wrappers in VM %s: %w", options.vmName, err)
 		}
 	}
 	return nil
 }
 
-func prepareConfiguredAgentsLocked(project string, vmName string, stateRoot string, development *DevelopmentConfig, trustDirectories []string, lockDirectory string, limactlCommand string, updateAgentName string, prepareWrappers bool, workflows ...*gpgWorkflow) error {
-	agentNames, err := configuredAgentNames(development)
+func prepareConfiguredAgentsLocked(options agentPreparationOptions) error {
+	agentNames, err := configuredAgentNames(options.development)
 	if err != nil {
 		return err
 	}
-	var contexts []context.Context
-	if len(workflows) > 0 && workflows[0] != nil {
-		contexts = []context.Context{workflows[0].context()}
-	}
-	return prepareAgentNamesLocked(project, vmName, stateRoot, agentNames, trustDirectories, lockDirectory, limactlCommand, prepareWrappers, updateAgentName, contexts...)
+	return prepareAgentNamesLocked(options, agentNames)
 }
 
-func prepareAgents(project string, selectedAgent string, withAgents []string, trustDirectories []string, options WorkflowOptions) (returnedInstance LimaInstance, returnErr error) {
+func prepareAgents(preparation AgentPreparationOptions) (returnedInstance LimaInstance, returnErr error) {
+	options := preparation.Workflow
 	cleanup, err := options.ownGPGWorkflow()
 	if err != nil {
 		return LimaInstance{}, err
@@ -681,11 +803,11 @@ func prepareAgents(project string, selectedAgent string, withAgents []string, tr
 	}
 	defer githubCleanup(&returnErr)
 
-	canonicalProject, err := canonicalProjectPath(project)
+	canonicalProject, err := canonicalProjectPath(preparation.Project)
 	if err != nil {
 		return LimaInstance{}, err
 	}
-	agentNames, err := effectiveAgentNames(selectedAgent, withAgents, options.Development)
+	agentNames, err := effectiveAgentNames(preparation.SelectedAgent, preparation.WithAgents, options.Development)
 	if err != nil {
 		return LimaInstance{}, err
 	}
@@ -696,6 +818,7 @@ func prepareAgents(project string, selectedAgent string, withAgents []string, tr
 	if err != nil {
 		return LimaInstance{}, err
 	}
+	trustDirectories := preparation.TrustDirectories
 	if trustDirectories == nil {
 		trustDirectories = []string{canonicalProject}
 	}
@@ -703,17 +826,18 @@ func prepareAgents(project string, selectedAgent string, withAgents []string, tr
 	preparationConfig.Agents = []string{}
 	options.Development = &preparationConfig
 	options.agentTrustDirectories = append([]string{}, trustDirectories...)
-	stateRoot := options.StateRoot
-	if stateRoot == "" {
-		stateRoot = canonicalProject
-	}
 	returnValue := LimaInstance{}
-	lockErr := withAdvisoryLock(canonicalProject, vmName, options.StateRoot, options.LockDirectory, func(string) error {
+	lockErr := withAdvisoryLock(AdvisoryLockOptions{
+		Project:       canonicalProject,
+		VMName:        vmName,
+		StateRoot:     options.StateRoot,
+		LockDirectory: options.LockDirectory,
+	}, func(string) error {
 		instance, prepareErr := options.prepareVMLocked(canonicalProject, vmName)
 		if prepareErr != nil {
 			return prepareErr
 		}
-		if err := prepareAgentNamesLocked(canonicalProject, vmName, stateRoot, agentNames, trustDirectories, options.LockDirectory, options.limaCommand(), len(agentNames) > 1, "", options.gpg.context()); err != nil {
+		if err := prepareAgentNamesLocked(options.agentPreparation(canonicalProject, vmName, len(agentNames) > 1, ""), agentNames); err != nil {
 			return err
 		}
 		returnValue = instance
@@ -725,8 +849,8 @@ func prepareAgents(project string, selectedAgent string, withAgents []string, tr
 	return returnValue, nil
 }
 
-func PrepareAgents(project string, selectedAgent string, withAgents []string, trustDirectories []string, options WorkflowOptions) (LimaInstance, error) {
-	return prepareAgents(project, selectedAgent, withAgents, trustDirectories, options)
+func PrepareAgents(preparation AgentPreparationOptions) (LimaInstance, error) {
+	return prepareAgents(preparation)
 }
 
 func isLoginCommand(agentName string, arguments []string) bool {
@@ -742,7 +866,7 @@ func isLoginCommand(agentName string, arguments []string) bool {
 	return false
 }
 
-func hasOption(arguments []string, options []string) bool {
+func hasOption(arguments, options []string) bool {
 	for _, argument := range arguments {
 		for _, option := range options {
 			if argument == option || strings.HasPrefix(argument, option+"=") {
@@ -774,7 +898,12 @@ func BuildAgentInvocation(agentName string, arguments []string) ([]string, map[s
 	return invocation, environment, nil
 }
 
-func RunAgent(project string, agentName string, arguments []string, withAgents []string, workingDirectory string, options WorkflowOptions) (exitCode int, returnErr error) {
+func RunAgent(project string, runOptions AgentRunOptions) (exitCode int, returnErr error) {
+	agentName := runOptions.AgentName
+	arguments := runOptions.Arguments
+	withAgents := runOptions.WithAgents
+	workingDirectory := runOptions.WorkingDirectory
+	options := runOptions.Workflow
 	cleanup, err := options.ownGPGWorkflow()
 	if err != nil {
 		return 0, err
@@ -809,7 +938,13 @@ func RunAgent(project string, agentName string, arguments []string, withAgents [
 	if err != nil {
 		return 0, err
 	}
-	instance, err := prepareAgents(canonicalProject, agentName, withAgents, trustDirectories, options)
+	instance, err := prepareAgents(AgentPreparationOptions{
+		Project:          canonicalProject,
+		SelectedAgent:    agentName,
+		WithAgents:       withAgents,
+		TrustDirectories: trustDirectories,
+		Workflow:         options,
+	})
 	if err != nil {
 		return 0, err
 	}
@@ -826,15 +961,9 @@ func RunAgent(project string, agentName string, arguments []string, withAgents [
 		return 0, err
 	}
 	environment := make(map[string]string, len(options.Environment)+len(stateEnvironment)+len(agentEnvironment))
-	for name, value := range options.Environment {
-		environment[name] = value
-	}
-	for name, value := range stateEnvironment {
-		environment[name] = value
-	}
-	for name, value := range agentEnvironment {
-		environment[name] = value
-	}
+	maps.Copy(environment, options.Environment)
+	maps.Copy(environment, stateEnvironment)
+	maps.Copy(environment, agentEnvironment)
 	slog.Info("launching agent", "agent", agentName, "vm", instance.Name)
 	agent, err := agentSpec(agentName)
 	if err != nil {
@@ -857,7 +986,7 @@ func RunAgent(project string, agentName string, arguments []string, withAgents [
 	}
 	optionsForGuest := workflowProcessOptions(options.limaCommand(), options.gpg, options.github)
 	optionsForGuest.check = false
-	result, err := runGuest(workingDirectory, instance.Name, guestArguments, optionsForGuest, environment)
+	result, err := runGuest(workingDirectory, instance.Name, guestArguments, guestExecution(optionsForGuest, environment))
 	if err != nil {
 		return 0, err
 	}
@@ -941,7 +1070,7 @@ func OpenShell(project string, arguments []string, workingDirectory string, opti
 	} else {
 		forwarded = guestArgumentsWithUserPath(forwarded)
 	}
-	limaArguments := []string{"shell", limaWorkdirFlag, workingDirectory, instance.Name}
+	limaArguments := []string{limaShellOperation, limaWorkdirFlag, workingDirectory, instance.Name}
 	limaArguments = append(limaArguments, environmentArguments...)
 	limaArguments = append(limaArguments, forwarded...)
 	runOptions := workflowProcessOptions(options.limaCommand(), options.gpg, options.github)
@@ -951,12 +1080,4 @@ func OpenShell(project string, arguments []string, workingDirectory string, opti
 		return 0, err
 	}
 	return result.ExitCode, nil
-}
-
-func formatAgentDescription(agentName string, arguments []string, withAgents []string) string {
-	prepared := 1
-	if names, err := normalizeAgentNames(agentName, withAgents); err == nil {
-		prepared = len(names)
-	}
-	return fmt.Sprintf("launch %s with %d forwarded argument(s) and %d prepared agent(s)", agentName, len(arguments), prepared)
 }

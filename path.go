@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"syscall"
 )
@@ -33,6 +34,7 @@ const (
 	xdgCacheHomeEnv                       = "XDG_CACHE_HOME"
 	stateDirectoryFlag                    = "--state-dir"
 	projectStateFlag                      = "--project-state"
+	configDirectoryName                   = "config"
 	ProgramName                           = programName
 	VMNamePrefix                          = vmNamePrefix
 	ProjectConfigName                     = projectConfigName
@@ -47,22 +49,22 @@ var darwinPublicPathAliases = []struct {
 	{publicPath: "/var", privatePath: "/private/var"},
 }
 
-type LJAError struct {
+type Error struct {
 	Message string
 	Cause   error
 }
 
-func (e *LJAError) Error() string {
+func (e *Error) Error() string {
 	return e.Message
 }
 
-func (e *LJAError) Unwrap() error {
+func (e *Error) Unwrap() error {
 	return e.Cause
 }
 
 func ljaError(format string, arguments ...any) error {
 	wrapped := fmt.Errorf(format, arguments...)
-	return &LJAError{Message: wrapped.Error(), Cause: wrapped}
+	return &Error{Message: wrapped.Error(), Cause: wrapped}
 }
 
 func homeDirectory() (string, error) {
@@ -145,8 +147,8 @@ func canonicalPath(path string) (string, error) {
 	if err != nil {
 		return "", ljaError("cannot resolve path %s: %w", path, err)
 	}
-	for index := len(missing) - 1; index >= 0; index-- {
-		resolvedProbe = filepath.Join(resolvedProbe, missing[index])
+	for _, m := range slices.Backward(missing) {
+		resolvedProbe = filepath.Join(resolvedProbe, m)
 	}
 	return normalizeDarwinCanonicalPath(filepath.Clean(resolvedProbe)), nil
 }
@@ -169,10 +171,14 @@ func ProjectSlug(project string) (string, error) {
 	separator := false
 	for _, character := range base {
 		if (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') {
-			builder.WriteRune(character)
+			if _, err := builder.WriteRune(character); err != nil {
+				return "", ljaError("cannot build project slug: %w", err)
+			}
 			separator = false
 		} else if !separator {
-			builder.WriteByte('-')
+			if err := builder.WriteByte('-'); err != nil {
+				return "", ljaError("cannot build project slug: %w", err)
+			}
 			separator = true
 		}
 	}
@@ -186,10 +192,6 @@ func ProjectSlug(project string) (string, error) {
 		return defaultProjectSlug, nil
 	}
 	return slug, nil
-}
-
-func projectSlug(project string) (string, error) {
-	return ProjectSlug(project)
 }
 
 func ProjectVMName(project string) (string, error) {
@@ -210,7 +212,7 @@ func projectVMName(project string) (string, error) {
 	return ProjectVMName(project)
 }
 
-func ResolveProject(projectArgument string, currentDirectory string) (string, error) {
+func ResolveProject(projectArgument, currentDirectory string) (string, error) {
 	candidate := projectArgument
 	if candidate == "" {
 		candidate = currentDirectory
@@ -236,11 +238,11 @@ func ResolveProject(projectArgument string, currentDirectory string) (string, er
 	return project, nil
 }
 
-func resolveProject(projectArgument string, currentDirectory string) (string, error) {
+func resolveProject(projectArgument, currentDirectory string) (string, error) {
 	return ResolveProject(projectArgument, currentDirectory)
 }
 
-func pathIsWithin(path string, directory string) (bool, error) {
+func pathIsWithin(path, directory string) (bool, error) {
 	relative, err := filepath.Rel(directory, path)
 	if err != nil {
 		return false, ljaError("cannot compare paths %s and %s: %w", path, directory, err)
@@ -248,7 +250,7 @@ func pathIsWithin(path string, directory string) (bool, error) {
 	return relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))), nil
 }
 
-func configuredHostDirectory(environment map[string]string, name string, defaultPath string) (string, error) {
+func configuredHostDirectory(environment map[string]string, name, defaultPath string) (string, error) {
 	value, present := environment[name]
 	if !present {
 		value = defaultPath
@@ -268,7 +270,7 @@ func ensurePrivateDirectory(directory string) error {
 	return nil
 }
 
-func defaultLockDirectory(project string, stateRoot string) (string, error) {
+func defaultLockDirectory(project, stateRoot string) (string, error) {
 	home, err := homeDirectory()
 	if err != nil {
 		return "", err

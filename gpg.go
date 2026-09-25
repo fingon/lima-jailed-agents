@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -25,6 +27,7 @@ const (
 	gpgCommand            = "gpg"
 	gpgConfCommand        = "gpgconf"
 	gpgHomeEnv            = "GNUPGHOME"
+	gpgNoAutostartFlag    = "--no-autostart"
 	gpgPackage            = "gnupg"
 	gpgSocketName         = "S.gpg-agent"
 	gpgSessionPrefix      = "/tmp/lja-gpg-"
@@ -42,10 +45,8 @@ func (config DevelopmentConfig) validateGPGEnvironment(environment map[string]st
 			return ljaError("%s is managed by LJA when gpg_forwarding is enabled", gpgHomeEnv)
 		}
 	}
-	for _, name := range config.EnvPassthrough {
-		if name == gpgHomeEnv {
-			return ljaError("%s cannot be passed through when gpg_forwarding is enabled", gpgHomeEnv)
-		}
+	if slices.Contains(config.EnvPassthrough, gpgHomeEnv) {
+		return ljaError("%s cannot be passed through when gpg_forwarding is enabled", gpgHomeEnv)
 	}
 	return nil
 }
@@ -97,16 +98,20 @@ func (workflow *gpgWorkflow) environment(project, vm, lima string, environment m
 		if err := workflow.closeSession(); err != nil {
 			return nil, err
 		}
-		session, err := startGPGSession(workflow.ctx, workflow.cancel, project, vm, lima)
+		session, err := startGPGSession(gpgSessionOptions{
+			parent:  workflow.ctx,
+			cancel:  workflow.cancel,
+			project: project,
+			vm:      vm,
+			lima:    lima,
+		})
 		if err != nil {
 			return nil, err
 		}
 		workflow.session = session
 	}
 	result := make(map[string]string, len(environment)+1)
-	for name, value := range environment {
-		result[name] = value
-	}
+	maps.Copy(result, environment)
 	result[gpgHomeEnv] = workflow.session.guestHome
 	return result, nil
 }
@@ -209,17 +214,20 @@ func (proxy *gpgProxy) relay(connection net.Conn) {
 		return
 	}
 	defer proxy.release(target)
+	unixTarget, ok := target.(*net.UnixConn)
+	if !ok {
+		proxy.fail(ljaError("GPG proxy target is not a Unix socket"))
+		return
+	}
 	var copies sync.WaitGroup
-	copies.Add(1)
-	go func() {
-		defer copies.Done()
+	copies.Go(func() {
 		if _, err := io.Copy(target, connection); err != nil && !errors.Is(err, net.ErrClosed) {
 			proxy.fail(err)
 		}
-		if err := target.(*net.UnixConn).CloseWrite(); err != nil && !errors.Is(err, net.ErrClosed) {
+		if err := unixTarget.CloseWrite(); err != nil && !errors.Is(err, net.ErrClosed) {
 			proxy.fail(err)
 		}
-	}()
+	})
 	if _, err := io.Copy(connection, target); err != nil && !errors.Is(err, net.ErrClosed) {
 		proxy.fail(err)
 	}
@@ -257,6 +265,14 @@ type gpgSession struct {
 	stopRevocation func() bool
 }
 
+type gpgSessionOptions struct {
+	parent  context.Context
+	cancel  context.CancelCauseFunc
+	project string
+	vm      string
+	lima    string
+}
+
 func gpgHostCommand(ctx context.Context, command string, arguments ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, command, arguments...)
 	cmd.WaitDelay = processPipeWaitTimeout
@@ -289,10 +305,10 @@ func gpgSSHArguments(config, vm, guestSocket, hostSocket string) []string {
 	return append(arguments, "-T", "-N", "-R", guestSocket+":"+hostSocket, "lima-"+vm)
 }
 
-func startGPGSession(parent context.Context, cancel context.CancelCauseFunc, project, vm, lima string) (result *gpgSession, returnErr error) {
-	ctx, stop := context.WithTimeout(parent, gpgStartupTimeout)
+func startGPGSession(sessionOptions gpgSessionOptions) (result *gpgSession, returnErr error) {
+	ctx, stop := context.WithTimeout(sessionOptions.parent, gpgStartupTimeout)
 	defer stop()
-	session := &gpgSession{project: project, vm: vm, lima: lima}
+	session := &gpgSession{project: sessionOptions.project, vm: sessionOptions.vm, lima: sessionOptions.lima}
 	defer func() {
 		if returnErr != nil {
 			returnErr = errors.Join(returnErr, session.close())
@@ -323,10 +339,10 @@ func startGPGSession(parent context.Context, cancel context.CancelCauseFunc, pro
 	if err != nil {
 		return nil, err
 	}
-	options := defaultProcessOptions(lima)
+	options := defaultProcessOptions(sessionOptions.lima)
 	options.context = ctx
 	options.captureOutput = true
-	metadata, err := runLima([]string{"list", "--format={{.SSHConfigFile}}", vm}, options)
+	metadata, err := runLima([]string{"list", "--format={{.SSHConfigFile}}", sessionOptions.vm}, options)
 	if err != nil {
 		return nil, err
 	}
@@ -334,7 +350,7 @@ func startGPGSession(parent context.Context, cancel context.CancelCauseFunc, pro
 	if err != nil {
 		return nil, err
 	}
-	home, err := runGuest(project, vm, []string{"mktemp", "-d", gpgSessionPrefix + "XXXXXXXXXX"}, options, nil)
+	home, err := runGuest(sessionOptions.project, sessionOptions.vm, []string{"mktemp", "-d", gpgSessionPrefix + "XXXXXXXXXX"}, guestExecution(options, nil))
 	if err != nil {
 		return nil, err
 	}
@@ -354,7 +370,7 @@ gpg_socket=$(gpgconf --list-dirs agent-socket)
 if [ "${gpg_socket%/*}" != "$GNUPGHOME" ]; then gpgconf --create-socketdir; fi
 printf '%s\n' "$gpg_socket"
 `
-	socket, err := runGuest(project, vm, []string{shellCommand, shellCommandFlag, setup}, options, environment)
+	socket, err := runGuest(sessionOptions.project, sessionOptions.vm, []string{shellCommand, shellCommandFlag, setup}, guestExecution(options, environment))
 	if err != nil {
 		return nil, err
 	}
@@ -368,7 +384,7 @@ printf '%s\n' "$gpg_socket"
 	if len(publicKeys) != 0 {
 		options.hasInput = true
 		options.inputData = publicKeys
-		if _, err := runGuest(project, vm, []string{gpgCommand, "--batch", "--no-autostart", "--import"}, options, environment); err != nil {
+		if _, err := runGuest(sessionOptions.project, sessionOptions.vm, []string{gpgCommand, "--batch", gpgNoAutostartFlag, "--import"}, guestExecution(options, environment)); err != nil {
 			return nil, err
 		}
 		options.hasInput = false
@@ -379,18 +395,18 @@ printf '%s\n' "$gpg_socket"
 		return nil, fmt.Errorf("cannot create GPG proxy directory: %w", err)
 	}
 	proxySocket := filepath.Join(session.hostDirectory, "agent")
-	session.proxy, err = newGPGProxy(proxySocket, hostSocket, cancel)
+	session.proxy, err = newGPGProxy(proxySocket, hostSocket, sessionOptions.cancel)
 	if err != nil {
 		return nil, err
 	}
-	session.stopRevocation = context.AfterFunc(parent, func() {
+	session.stopRevocation = context.AfterFunc(sessionOptions.parent, func() {
 		if err := session.proxy.close(); err != nil {
-			slog.Error("cannot revoke GPG proxy", "vm", vm, "error", err)
+			slog.Error("cannot revoke GPG proxy", "vm", sessionOptions.vm, "error", err)
 		}
 	})
-	sshContext, cancelSSH := context.WithCancel(parent)
+	sshContext, cancelSSH := context.WithCancel(sessionOptions.parent)
 	session.cancelSSH = cancelSSH
-	session.ssh = exec.CommandContext(sshContext, gpgSSHCommand, gpgSSHArguments(sshConfig, vm, session.guestSocket, proxySocket)...)
+	session.ssh = exec.CommandContext(sshContext, gpgSSHCommand, gpgSSHArguments(sshConfig, sessionOptions.vm, session.guestSocket, proxySocket)...)
 	session.ssh.Stderr = os.Stderr
 	if err := session.ssh.Start(); err != nil {
 		return nil, fmt.Errorf("cannot start GPG SSH forwarding: %w", err)
@@ -400,9 +416,9 @@ printf '%s\n' "$gpg_socket"
 		session.sshErr = session.ssh.Wait()
 		if sshContext.Err() == nil {
 			if session.sshErr != nil {
-				cancel(fmt.Errorf("GPG SSH tunnel exited unexpectedly: %w", session.sshErr))
+				sessionOptions.cancel(fmt.Errorf("GPG SSH tunnel exited unexpectedly: %w", session.sshErr))
 			} else {
-				cancel(ljaError("GPG SSH tunnel exited unexpectedly"))
+				sessionOptions.cancel(ljaError("GPG SSH tunnel exited unexpectedly"))
 			}
 		}
 		close(session.sshDone)
@@ -410,7 +426,7 @@ printf '%s\n' "$gpg_socket"
 	probeOptions := options
 	probeOptions.check = false
 	for {
-		probe, err := runGuest(project, vm, []string{"test", "-S", session.guestSocket}, probeOptions, nil)
+		probe, err := runGuest(sessionOptions.project, sessionOptions.vm, []string{"test", "-S", session.guestSocket}, guestExecution(probeOptions, nil))
 		if err != nil {
 			return nil, err
 		}
@@ -418,7 +434,7 @@ printf '%s\n' "$gpg_socket"
 			break
 		}
 		if probe.ExitCode != 1 {
-			return nil, guestConnectionError(vm, probe)
+			return nil, guestConnectionError(sessionOptions.vm, probe)
 		}
 		select {
 		case <-ctx.Done():
@@ -426,14 +442,14 @@ printf '%s\n' "$gpg_socket"
 		case <-time.After(gpgProbeInterval):
 		}
 	}
-	probe, err := runGuest(project, vm, []string{"gpg-connect-agent", "--no-autostart", "GETINFO version", "/bye"}, options, environment)
+	probe, err := runGuest(sessionOptions.project, sessionOptions.vm, []string{"gpg-connect-agent", gpgNoAutostartFlag, "GETINFO version", "/bye"}, guestExecution(options, environment))
 	if err != nil {
 		return nil, err
 	}
 	if !bytes.Contains(probe.Stdout, []byte("\nOK")) && !bytes.HasPrefix(probe.Stdout, []byte("OK")) {
 		return nil, ljaError("forwarded GPG agent did not acknowledge probe")
 	}
-	slog.Info("GPG forwarding ready", "vm", vm)
+	slog.Info("GPG forwarding ready", "vm", sessionOptions.vm)
 	return session, nil
 }
 
@@ -451,8 +467,7 @@ func (session *gpgSession) close() error {
 	if session.sshDone != nil {
 		<-session.sshDone
 		if session.sshErr != nil {
-			var exitError *exec.ExitError
-			if !errors.As(session.sshErr, &exitError) {
+			if exitError, ok := errors.AsType[*exec.ExitError](session.sshErr); !ok || exitError == nil {
 				result = errors.Join(result, fmt.Errorf("cannot reap GPG SSH tunnel: %w", session.sshErr))
 			}
 		}
@@ -471,7 +486,7 @@ func (session *gpgSession) close() error {
 			script += "gpgconf --remove-socketdir\n"
 		}
 		script += "rm -rf -- \"$GNUPGHOME\"\n"
-		if _, err := runGuest(session.project, session.vm, []string{shellCommand, shellCommandFlag, script}, options, map[string]string{gpgHomeEnv: session.guestHome}); err != nil {
+		if _, err := runGuest(session.project, session.vm, []string{shellCommand, shellCommandFlag, script}, guestExecution(options, map[string]string{gpgHomeEnv: session.guestHome})); err != nil {
 			result = errors.Join(result, fmt.Errorf("cannot clean guest GPG session %s: %w", session.guestHome, err))
 		}
 	}

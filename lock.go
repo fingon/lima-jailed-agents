@@ -2,7 +2,6 @@ package lja
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -10,13 +9,27 @@ import (
 	"syscall"
 )
 
-func withAdvisoryLock(project string, vmName string, stateRoot string, lockDirectory string, function func(string) error) (returnErr error) {
-	canonicalProject, err := canonicalProjectPath(project)
+const (
+	xdgDataDirectoryName  = "data"
+	xdgStateDirectoryName = "state"
+	xdgCacheDirectoryName = "cache"
+)
+
+type AdvisoryLockOptions struct {
+	Project       string
+	VMName        string
+	StateRoot     string
+	LockDirectory string
+}
+
+func withAdvisoryLock(options AdvisoryLockOptions, function func(string) error) (returnErr error) {
+	canonicalProject, err := canonicalProjectPath(options.Project)
 	if err != nil {
 		return err
 	}
+	lockDirectory := options.LockDirectory
 	if lockDirectory == "" {
-		lockDirectory, err = defaultLockDirectory(canonicalProject, stateRoot)
+		lockDirectory, err = defaultLockDirectory(canonicalProject, options.StateRoot)
 		if err != nil {
 			return err
 		}
@@ -25,12 +38,12 @@ func withAdvisoryLock(project string, vmName string, stateRoot string, lockDirec
 	if err != nil {
 		return err
 	}
-	lockPath := filepath.Join(canonicalLockDirectory, vmName+lockFileSuffix)
+	lockPath := filepath.Join(canonicalLockDirectory, options.VMName+lockFileSuffix)
 	canonicalLockPath, err := canonicalPath(lockPath)
 	if err != nil {
 		return err
 	}
-	mounts, err := expectedMountPaths(canonicalProject, stateRoot)
+	mounts, err := expectedMountPaths(canonicalProject, options.StateRoot)
 	if err != nil {
 		return err
 	}
@@ -71,8 +84,34 @@ func withAdvisoryLock(project string, vmName string, stateRoot string, lockDirec
 	return nil
 }
 
-func AdvisoryLock(project string, vmName string, stateRoot string, lockDirectory string, function func(string) error) error {
-	return withAdvisoryLock(project, vmName, stateRoot, lockDirectory, function)
+func AdvisoryLock(options AdvisoryLockOptions, function func(string) error) error {
+	return withAdvisoryLock(options, function)
+}
+
+func resolveConfiguredStateRoot(canonicalProject string, stateDirectory *string, environment map[string]string) (string, error) {
+	if stateDirectory != nil {
+		if *stateDirectory == "" {
+			return "", ljaError("host environment %s must be a non-empty path", stateDirectoryEnv)
+		}
+		return configuredHostDirectory(map[string]string{stateDirectoryEnv: *stateDirectory}, stateDirectoryEnv, canonicalProject)
+	}
+	if _, present := environment[stateDirectoryEnv]; present {
+		return configuredHostDirectory(environment, stateDirectoryEnv, canonicalProject)
+	}
+	home, err := homeDirectory()
+	if err != nil {
+		return "", err
+	}
+	dataRoot := filepath.Join(home, defaultDataDirectory)
+	if _, present := environment[xdgDataHomeEnv]; present {
+		dataRoot, err = configuredHostDirectory(environment, xdgDataHomeEnv, dataRoot)
+	} else {
+		dataRoot, err = canonicalPath(dataRoot)
+	}
+	if err != nil {
+		return "", err
+	}
+	return canonicalPath(filepath.Join(dataRoot, programName, sharedStateDirectoryName))
 }
 
 func resolveStateRoot(project string, stateDirectory *string, projectState bool, environment map[string]string) (string, error) {
@@ -86,33 +125,7 @@ func resolveStateRoot(project string, stateDirectory *string, projectState bool,
 	if environment == nil {
 		environment = environmentMap()
 	}
-	var root string
-	if stateDirectory != nil {
-		if *stateDirectory == "" {
-			return "", ljaError("host environment %s must be a non-empty path", stateDirectoryEnv)
-		}
-		root, err = configuredHostDirectory(map[string]string{stateDirectoryEnv: *stateDirectory}, stateDirectoryEnv, canonicalProject)
-	} else if _, present := environment[stateDirectoryEnv]; present {
-		root, err = configuredHostDirectory(environment, stateDirectoryEnv, canonicalProject)
-	} else {
-		home, homeErr := homeDirectory()
-		if homeErr != nil {
-			return "", homeErr
-		}
-		dataRoot := filepath.Join(home, defaultDataDirectory)
-		if _, present := environment[xdgDataHomeEnv]; present {
-			dataRoot, err = configuredHostDirectory(environment, xdgDataHomeEnv, dataRoot)
-			if err != nil {
-				return "", err
-			}
-		} else {
-			dataRoot, err = canonicalPath(dataRoot)
-			if err != nil {
-				return "", err
-			}
-		}
-		root, err = canonicalPath(filepath.Join(dataRoot, programName, sharedStateDirectoryName))
-	}
+	root, err := resolveConfiguredStateRoot(canonicalProject, stateDirectory, environment)
 	if err != nil {
 		return "", err
 	}
@@ -141,7 +154,7 @@ func ResolveStateRoot(project string, stateDirectory *string, projectState bool,
 	return resolveStateRoot(project, stateDirectory, projectState, environment)
 }
 
-func agentStateEnvironment(stateRoot string, agentName string) (map[string]string, error) {
+func agentStateEnvironment(stateRoot, agentName string) (map[string]string, error) {
 	canonicalState, err := canonicalProjectPath(stateRoot)
 	if err != nil {
 		return nil, err
@@ -161,21 +174,21 @@ func agentStateEnvironment(stateRoot string, agentName string) (map[string]strin
 		name      string
 		directory string
 	}{
-		{name: xdgConfigHomeEnv, directory: "config"},
-		{name: xdgDataHomeEnv, directory: "data"},
-		{name: xdgStateHomeEnv, directory: "state"},
-		{name: xdgCacheHomeEnv, directory: "cache"},
+		{name: xdgConfigHomeEnv, directory: configDirectoryName},
+		{name: xdgDataHomeEnv, directory: xdgDataDirectoryName},
+		{name: xdgStateHomeEnv, directory: xdgStateDirectoryName},
+		{name: xdgCacheHomeEnv, directory: xdgCacheDirectoryName},
 	} {
 		environment[entry.name] = filepath.Join(stateDirectory, entry.directory)
 	}
 	return environment, nil
 }
 
-func AgentStateEnvironment(stateRoot string, agentName string) (map[string]string, error) {
+func AgentStateEnvironment(stateRoot, agentName string) (map[string]string, error) {
 	return agentStateEnvironment(stateRoot, agentName)
 }
 
-func agentStateDirectories(stateRoot string, agentName string) ([]string, error) {
+func agentStateDirectories(stateRoot, agentName string) ([]string, error) {
 	canonicalState, err := canonicalProjectPath(stateRoot)
 	if err != nil {
 		return nil, err
@@ -191,13 +204,13 @@ func agentStateDirectories(stateRoot string, agentName string) ([]string, error)
 	}
 	stateDirectory := filepath.Join(canonicalState, openCodeStateDirectoryName)
 	directories := []string{stateDirectory}
-	for _, name := range []string{"config", "data", "state", "cache"} {
+	for _, name := range []string{configDirectoryName, xdgDataDirectoryName, xdgStateDirectoryName, xdgCacheDirectoryName} {
 		directories = append(directories, filepath.Join(stateDirectory, name))
 	}
 	return directories, nil
 }
 
-func EnsureAgentStateDirectories(stateRoot string, agentName string) ([]string, error) {
+func EnsureAgentStateDirectories(stateRoot, agentName string) ([]string, error) {
 	canonicalState, err := canonicalProjectPath(stateRoot)
 	if err != nil {
 		return nil, err
@@ -243,7 +256,7 @@ func EnsureAgentStateDirectories(stateRoot string, agentName string) ([]string, 
 	return directories, nil
 }
 
-func agentInstructionPaths(stateRoot string, agentName string, hostEnvironment map[string]string) (string, string, error) {
+func agentInstructionPaths(stateRoot, agentName string, hostEnvironment map[string]string) (string, string, error) {
 	canonicalState, err := canonicalProjectPath(stateRoot)
 	if err != nil {
 		return "", "", err
@@ -288,14 +301,14 @@ func agentInstructionPaths(stateRoot string, agentName string, hostEnvironment m
 	if err != nil {
 		return "", "", err
 	}
-	return filepath.Join(sourceDirectory, agentInstructionFileName), filepath.Join(canonicalState, openCodeStateDirectoryName, "config", openCodeDirectoryName, agentInstructionFileName), nil
+	return filepath.Join(sourceDirectory, agentInstructionFileName), filepath.Join(canonicalState, openCodeStateDirectoryName, configDirectoryName, openCodeDirectoryName, agentInstructionFileName), nil
 }
 
-func AgentInstructionPaths(stateRoot string, agentName string, hostEnvironment map[string]string) (string, string, error) {
+func AgentInstructionPaths(stateRoot, agentName string, hostEnvironment map[string]string) (string, string, error) {
 	return agentInstructionPaths(stateRoot, agentName, hostEnvironment)
 }
 
-func validateInstructionDestination(stateRoot string, destination string) error {
+func validateInstructionDestination(stateRoot, destination string) error {
 	canonicalState, err := canonicalProjectPath(stateRoot)
 	if err != nil {
 		return err
@@ -327,7 +340,7 @@ func validateInstructionDestination(stateRoot string, destination string) error 
 	return nil
 }
 
-func RefreshAgentInstructions(stateRoot string, agentName string, hostEnvironment map[string]string) (bool, error) {
+func RefreshAgentInstructions(stateRoot, agentName string, hostEnvironment map[string]string) (bool, error) {
 	canonicalState, err := canonicalProjectPath(stateRoot)
 	if err != nil {
 		return false, err
@@ -399,5 +412,5 @@ func firstError(errorsToCheck ...error) error {
 			return err
 		}
 	}
-	return fmt.Errorf("unknown error")
+	return errors.New("unknown error")
 }

@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 )
 
-func DiscoverProject(directory string, limactlCommand string) (string, error) {
+func DiscoverProject(directory, limactlCommand string) (string, error) {
 	canonicalDirectory, err := canonicalProjectPath(directory)
 	if err != nil {
 		return "", err
@@ -19,7 +19,7 @@ func DiscoverProject(directory string, limactlCommand string) (string, error) {
 	return policy.discover(canonicalDirectory, limactlCommand)
 }
 
-func (policy projectDirectoryPolicy) discover(canonicalDirectory string, limactlCommand string) (string, error) {
+func (policy projectDirectoryPolicy) discover(canonicalDirectory, limactlCommand string) (string, error) {
 	vmNames := map[string]bool(nil)
 	for candidate := canonicalDirectory; ; candidate = filepath.Dir(candidate) {
 		reason, err := policy.rejection(candidate)
@@ -74,11 +74,11 @@ func (policy projectDirectoryPolicy) discover(canonicalDirectory string, limactl
 	}
 }
 
-func discoverProject(directory string, limactlCommand string) (string, error) {
+func discoverProject(directory, limactlCommand string) (string, error) {
 	return DiscoverProject(directory, limactlCommand)
 }
 
-func ShowStatus(project string, stateRoot string, limactlCommand string) error {
+func ShowStatus(project, stateRoot, limactlCommand string) error {
 	canonicalProject, err := canonicalProjectPath(project)
 	if err != nil {
 		return err
@@ -102,15 +102,13 @@ func ShowStatus(project string, stateRoot string, limactlCommand string) error {
 	if selectedState == "" {
 		selectedState = canonicalProject
 	}
-	fmt.Printf("project: %s\nstate: %s\nvm: %s\nstatus: %s\n", canonicalProject, selectedState, vmName, status)
+	if _, err := fmt.Printf("project: %s\nstate: %s\nvm: %s\nstatus: %s\n", canonicalProject, selectedState, vmName, status); err != nil {
+		return ljaError("cannot report project status: %w", err)
+	}
 	return nil
 }
 
-func showStatus(project string, stateRoot string, limactlCommand string) error {
-	return ShowStatus(project, stateRoot, limactlCommand)
-}
-
-func StopVM(project string, stateRoot string, limactlCommand string, lockDirectory string) error {
+func StopVM(project, stateRoot, limactlCommand, lockDirectory string) error {
 	canonicalProject, err := canonicalProjectPath(project)
 	if err != nil {
 		return err
@@ -119,35 +117,33 @@ func StopVM(project string, stateRoot string, limactlCommand string, lockDirecto
 	if err != nil {
 		return err
 	}
-	return withAdvisoryLock(canonicalProject, vmName, stateRoot, lockDirectory, func(string) error {
+	return withAdvisoryLock(AdvisoryLockOptions{
+		Project:       canonicalProject,
+		VMName:        vmName,
+		StateRoot:     stateRoot,
+		LockDirectory: lockDirectory,
+	}, func(string) error {
 		instance, inspectErr := inspectLima(vmName, limactlCommand)
 		if inspectErr != nil {
 			return inspectErr
 		}
 		if instance == nil {
-			fmt.Printf("vm: %s\nstatus: Absent\n", vmName)
-			return nil
+			return reportVMStatus(vmName, "Absent")
 		}
 		if err := validateProjectMount(*instance, canonicalProject, stateRoot); err != nil {
 			return err
 		}
 		if instance.Status == limaStatusStopped {
-			fmt.Printf("vm: %s\nstatus: Stopped\n", vmName)
-			return nil
+			return reportVMStatus(vmName, "Stopped")
 		}
 		if instance.Status != limaStatusRunning {
 			return ljaError("VM %s is in incompatible state %s", vmName, instance.Status)
 		}
 		slog.Info("stopping VM", "vm", vmName)
 		options := defaultProcessOptions(limactlCommand)
-		if _, err := runLima([]string{"stop", vmName}, options); err != nil {
+		if _, err := runLima([]string{stopCommandName, vmName}, options); err != nil {
 			return err
 		}
-		fmt.Printf("vm: %s\nstatus: Stopped\n", vmName)
-		return nil
+		return reportVMStatus(vmName, "Stopped")
 	})
-}
-
-func stopVM(project string, stateRoot string, limactlCommand string, lockDirectory string) error {
-	return StopVM(project, stateRoot, limactlCommand, lockDirectory)
 }

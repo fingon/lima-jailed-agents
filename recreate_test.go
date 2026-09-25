@@ -3,6 +3,7 @@ package lja
 import (
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,16 +16,27 @@ import (
 )
 
 const (
-	vmProcessEnv             = "LJA_TEST_VM_PROCESS"
-	vmDatabaseEnv            = "LJA_TEST_VM_DATABASE"
-	vmFailureEnv             = "LJA_TEST_VM_FAILURE"
-	vmBinaryEnv              = "LJA_TEST_BINARY"
-	vmPackageInstallNoopEnv  = "LJA_TEST_PACKAGE_INSTALL_NOOP"
-	vmNodeRuntimeModeEnv     = "LJA_TEST_NODE_RUNTIME_MODE"
-	vmAgentInstallFailureEnv = "LJA_TEST_AGENT_INSTALL_FAILURE"
-	testOriginalID           = "original"
-	testReplacementID        = "replacement"
-	testSetupCommand         = "test-setup"
+	vmProcessEnv                 = "LJA_TEST_VM_PROCESS"
+	vmDatabaseEnv                = "LJA_TEST_VM_DATABASE"
+	vmFailureEnv                 = "LJA_TEST_VM_FAILURE"
+	vmBinaryEnv                  = "LJA_TEST_BINARY"
+	vmPackageInstallNoopEnv      = "LJA_TEST_PACKAGE_INSTALL_NOOP"
+	vmNodeRuntimeModeEnv         = "LJA_TEST_NODE_RUNTIME_MODE"
+	vmAgentInstallFailureEnv     = "LJA_TEST_AGENT_INSTALL_FAILURE"
+	testOriginalID               = "original"
+	testReplacementID            = "replacement"
+	testSetupCommand             = "test-setup"
+	deleteBackupStage            = "delete-backup"
+	connectStage                 = "connect"
+	makefileName                 = "Makefile"
+	renameHelpStage              = "rename-help"
+	packageInstallStage          = "package-install"
+	nodeRuntimeFailureMode       = "failing"
+	nodeRuntimeFailureMessage    = "node runtime failed"
+	configuredPackagesTestName   = "configured packages"
+	implicitGitTestName          = "implicit Git"
+	multiplePackageInstallScript = "sudo apt-get update && sudo apt-get install -y 'make' 'ninja-build'"
+	nodePackagesFixture          = "[nodejs, npm]"
 )
 
 type testMount struct {
@@ -77,16 +89,20 @@ func readVMDatabase() (vmDatabase, error) {
 	return database, err
 }
 
-func TestVMProcess(t *testing.T) {
+func TestVMProcess(_ *testing.T) {
 	if os.Getenv(vmProcessEnv) != "1" {
 		return
 	}
 	if err := runVMProcess(); err != nil {
-		if exitErr, ok := err.(vmProcessExitError); ok {
-			fmt.Fprintln(os.Stderr, exitErr.message)
+		if exitErr, ok := errors.AsType[vmProcessExitError](err); ok {
+			if _, writeErr := fmt.Fprintln(os.Stderr, exitErr.message); writeErr != nil {
+				os.Exit(24)
+			}
 			os.Exit(exitErr.code)
 		}
-		fmt.Fprintln(os.Stderr, err)
+		if _, writeErr := fmt.Fprintln(os.Stderr, err); writeErr != nil {
+			os.Exit(24)
+		}
 		os.Exit(23)
 	}
 	os.Exit(0)
@@ -105,21 +121,21 @@ func runVMProcess() error {
 		}
 	}
 	if len(arguments) == 0 {
-		return fmt.Errorf("missing fake Lima operation")
+		return errors.New("missing fake Lima operation")
 	}
 	operation := arguments[0]
 	guestArguments := []string{}
-	if operation == "shell" {
+	if operation == limaShellOperation {
 		guestArgumentIndex := 4
 		if len(arguments) > 1 && arguments[1] == limaNoninteractiveFlag {
 			guestArgumentIndex++
 		}
 		if len(arguments) <= guestArgumentIndex {
-			return fmt.Errorf("missing fake guest command")
+			return errors.New("missing fake guest command")
 		}
 		guestArguments = unwrapGuestPathArguments(arguments[guestArgumentIndex:])
 	}
-	if operation == "list" {
+	if operation == limaListArguments {
 		instances := make([]testVM, 0, len(database.VMs))
 		for _, instance := range database.VMs {
 			instances = append(instances, instance)
@@ -134,34 +150,36 @@ func runVMProcess() error {
 	}
 	name := arguments[len(arguments)-1]
 	stage := operation
-	if operation == "rename" {
-		if arguments[1] == "--help" {
-			stage = "rename-help"
-		} else if strings.HasPrefix(name, backupNamePrefix) {
+	if operation == limaRenameOperation {
+		switch {
+		case arguments[1] == helpFlag:
+			stage = renameHelpStage
+		case strings.HasPrefix(name, backupNamePrefix):
 			stage = "rename-old"
-		} else {
+		default:
 			stage = "rename-new"
 		}
 	}
-	if operation == "start" || operation == "stop" {
+	if operation == limaStartOperation || operation == stopCommandName {
 		if strings.HasPrefix(name, replacementNamePrefix) {
 			stage += "-candidate"
 		} else {
 			stage += "-final"
 		}
 	}
-	if operation == "delete" {
+	if operation == deleteCommandName {
 		if strings.HasPrefix(name, backupNamePrefix) {
-			stage = "delete-backup"
+			stage = deleteBackupStage
 		}
 	}
-	if operation == "shell" {
-		if arguments[len(arguments)-1] == testSetupCommand {
-			stage = "setup"
-		} else if isPackageInstallationCommand(guestArguments) {
-			stage = "package-install"
-		} else {
-			stage = "connect"
+	if operation == limaShellOperation {
+		switch {
+		case arguments[len(arguments)-1] == testSetupCommand:
+			stage = configSetup
+		case isPackageInstallationCommand(guestArguments):
+			stage = packageInstallStage
+		default:
+			stage = connectStage
 		}
 	}
 	if failure == stage || failure == stage+"-partial" {
@@ -178,21 +196,21 @@ func runVMProcess() error {
 		return fmt.Errorf("injected failure: %s", failure)
 	}
 	switch operation {
-	case "rename":
-		if arguments[1] != "--help" {
+	case limaRenameOperation:
+		if arguments[1] != helpFlag {
 			from := arguments[len(arguments)-2]
 			instance, present := database.VMs[from]
 			if !present || instance.Status == limaStatusRunning {
 				return fmt.Errorf("cannot rename %s", from)
 			}
 			if _, exists := database.VMs[name]; exists {
-				return fmt.Errorf("rename destination exists")
+				return errors.New("rename destination exists")
 			}
 			delete(database.VMs, from)
 			instance.Name = name
 			database.VMs[name] = instance
 		}
-	case "create":
+	case createCommandName:
 		instance := testVM{Status: limaStatusStopped, ID: testReplacementID, Config: map[string]any{}}
 		if arguments[len(arguments)-1] == "-" {
 			input, err := io.ReadAll(os.Stdin)
@@ -211,10 +229,10 @@ func runVMProcess() error {
 		}
 		for index := 1; index < len(arguments); index++ {
 			switch arguments[index] {
-			case "--name":
+			case limaNameFlag:
 				index++
 				instance.Name = arguments[index]
-			case "--mount-only":
+			case limaMountOnlyFlag:
 				index++
 				paths, err := csv.NewReader(strings.NewReader(arguments[index])).Read()
 				if err != nil {
@@ -229,21 +247,23 @@ func runVMProcess() error {
 			}
 		}
 		database.VMs[instance.Name] = instance
-	case "start", "stop":
+	case limaStartOperation, stopCommandName:
 		instance, present := database.VMs[name]
 		if !present {
 			return fmt.Errorf("missing VM %s", name)
 		}
 		instance.Status = limaStatusRunning
-		if operation == "stop" {
+		if operation == stopCommandName {
 			instance.Status = limaStatusStopped
 		}
 		database.VMs[name] = instance
-	case "delete":
+	case deleteCommandName:
 		delete(database.VMs, name)
-	case "shell":
+	case limaShellOperation:
 		if len(guestArguments) >= 3 && guestArguments[0] == sudoCommand && guestArguments[1] == npmCommand && guestArguments[2] == installCommand && os.Getenv(vmAgentInstallFailureEnv) == "1" {
-			fmt.Fprintln(os.Stderr, "npm ERR! code EBADENGINE")
+			if _, err := fmt.Fprintln(os.Stderr, "npm ERR! code EBADENGINE"); err != nil {
+				return vmProcessExitError{code: 24, message: err.Error()}
+			}
 			return vmProcessExitError{code: 23, message: "npm engine requirements are incompatible"}
 		}
 		if len(guestArguments) == 2 && guestArguments[0] == catCommand && guestArguments[1] == osReleasePath {
@@ -252,15 +272,17 @@ func runVMProcess() error {
 			}
 		}
 		if len(guestArguments) == 2 && guestArguments[1] == versionFlag && (guestArguments[0] == nodeCommand || guestArguments[0] == npmCommand) {
-			if guestArguments[0] == nodeCommand && os.Getenv(vmNodeRuntimeModeEnv) == "failing" {
-				fmt.Fprintln(os.Stderr, "node: cannot execute")
-				return vmProcessExitError{code: 23, message: "node runtime failed"}
+			if guestArguments[0] == nodeCommand && os.Getenv(vmNodeRuntimeModeEnv) == nodeRuntimeFailureMode {
+				if _, err := fmt.Fprintln(os.Stderr, "node: cannot execute"); err != nil {
+					return vmProcessExitError{code: 24, message: err.Error()}
+				}
+				return vmProcessExitError{code: 23, message: nodeRuntimeFailureMessage}
 			}
 			if _, err := fmt.Fprintln(os.Stdout, "v22.0.0"); err != nil {
 				return err
 			}
 		}
-		if len(guestArguments) > 0 && guestArguments[0] == "dpkg-query" && database.PackageInstallationDone {
+		if len(guestArguments) > 0 && guestArguments[0] == dpkgQueryCommand && database.PackageInstallationDone {
 			if _, err := fmt.Fprint(os.Stdout, packageInstalledStatus); err != nil {
 				return err
 			}
@@ -273,7 +295,7 @@ func runVMProcess() error {
 				return err
 			}
 		}
-		if stage == "setup" {
+		if stage == configSetup {
 			name = arguments[3]
 			instance := database.VMs[name]
 			instance.SetupCount++
@@ -287,7 +309,7 @@ func runVMProcess() error {
 
 func isPackageInstallationCommand(arguments []string) bool {
 	arguments = unwrapGuestPathArguments(arguments)
-	return len(arguments) >= 4 && arguments[0] == shellCommand && arguments[1] == "-eu" && arguments[2] == shellCommandFlag && strings.Contains(arguments[3], aptGetCommand+" "+installCommand)
+	return len(arguments) >= 4 && arguments[0] == shellCommand && arguments[1] == shellStrictFlag && arguments[2] == shellCommandFlag && strings.Contains(arguments[3], aptGetCommand+" "+installCommand)
 }
 
 func unwrapGuestPathArguments(arguments []string) []string {
@@ -328,7 +350,7 @@ func vmFixture(t *testing.T, status string) (string, string, WorkflowOptions) {
 	assert.NilError(t, err)
 	command := filepath.Join(root, limaCtlCommand)
 	assert.NilError(t, os.WriteFile(command, script, 0o755))
-	config := DevelopmentConfig{Lima: map[string]any{"cpus": 4, "memory": "8GiB"}, Setup: []SetupCommand{{Command: testSetupCommand}}}
+	config := DevelopmentConfig{Lima: map[string]any{limaCPUsKey: 4, limaMemoryKey: limaMemoryFixtureValue}, Setup: []SetupCommand{{Command: testSetupCommand}}}
 	return project, name, WorkflowOptions{Development: &config, LimaCommand: command, LockDirectory: filepath.Join(root, "locks")}
 }
 
@@ -339,9 +361,9 @@ func TestEffectiveDevelopmentPackages(t *testing.T) {
 		copyGitConfig bool
 		want          []string
 	}{
-		{name: "configured packages", packages: []string{"make", "ninja-build"}, want: []string{"make", "ninja-build"}},
-		{name: "implicit Git", packages: []string{"make"}, copyGitConfig: true, want: []string{"make", gitCommand}},
-		{name: "deduplicated Git", packages: []string{"git", "make", "git"}, copyGitConfig: true, want: []string{"git", "make"}},
+		{name: configuredPackagesTestName, packages: []string{makeCommand, ninjaBuildPackage}, want: []string{makeCommand, ninjaBuildPackage}},
+		{name: implicitGitTestName, packages: []string{makeCommand}, copyGitConfig: true, want: []string{makeCommand, gitCommand}},
+		{name: "deduplicated Git", packages: []string{gitCommand, makeCommand, gitCommand}, copyGitConfig: true, want: []string{gitCommand, makeCommand}},
 		{name: "empty without Git copy", copyGitConfig: false, want: []string{}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -359,8 +381,8 @@ func TestGuestPackageInstallationScript(t *testing.T) {
 		packages []string
 		want     string
 	}{
-		{name: "one package", packages: []string{"make"}, want: "sudo apt-get update && sudo apt-get install -y 'make'"},
-		{name: "multiple packages", packages: []string{"make", "ninja-build"}, want: "sudo apt-get update && sudo apt-get install -y 'make' 'ninja-build'"},
+		{name: "one package", packages: []string{makeCommand}, want: "sudo apt-get update && sudo apt-get install -y 'make'"},
+		{name: "multiple packages", packages: []string{makeCommand, ninjaBuildPackage}, want: multiplePackageInstallScript},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			assert.Equal(t, guestPackageInstallationScript(test.packages), test.want)
@@ -376,9 +398,9 @@ func TestPreparationBatchesGuestPackages(t *testing.T) {
 		github        bool
 		wantScript    string
 	}{
-		{name: "configured packages", packages: []string{"make", "ninja-build"}, wantScript: "sudo apt-get update && sudo apt-get install -y 'make' 'ninja-build'"},
-		{name: "implicit Git", packages: []string{"make"}, copyGitConfig: true, wantScript: "sudo apt-get update && sudo apt-get install -y 'make' 'git'"},
-		{name: "configured Git is not duplicated", packages: []string{"git", "make"}, copyGitConfig: true, wantScript: "sudo apt-get update && sudo apt-get install -y 'git' 'make'"},
+		{name: configuredPackagesTestName, packages: []string{makeCommand, ninjaBuildPackage}, wantScript: multiplePackageInstallScript},
+		{name: implicitGitTestName, packages: []string{makeCommand}, copyGitConfig: true, wantScript: "sudo apt-get update && sudo apt-get install -y 'make' 'git'"},
+		{name: "configured Git is not duplicated", packages: []string{gitCommand, makeCommand}, copyGitConfig: true, wantScript: "sudo apt-get update && sudo apt-get install -y 'git' 'make'"},
 		{name: "GitHub dependencies without configured packages", github: true, wantScript: "sudo apt-get update && sudo apt-get install -y 'git' 'gh'"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -387,7 +409,12 @@ func TestPreparationBatchesGuestPackages(t *testing.T) {
 			t.Setenv("HOME", root)
 			config := DevelopmentConfig{Packages: test.packages, CopyGitConfig: test.copyGitConfig}
 			config.GitHub.Enabled = test.github
-			err := prepareDevelopment(project, vmName, &config, nil, options.LimaCommand, nil, nil)
+			err := prepareDevelopment(developmentPreparationOptions{
+				project:        project,
+				vmName:         vmName,
+				config:         &config,
+				limactlCommand: options.LimaCommand,
+			})
 			assert.NilError(t, err)
 
 			database, err := readVMDatabase()
@@ -408,10 +435,15 @@ func TestPreparationBatchesGuestPackages(t *testing.T) {
 func TestPreparationKeepsPackageInstallationBeforeSetup(t *testing.T) {
 	project, vmName, options := vmFixture(t, limaStatusRunning)
 	config := DevelopmentConfig{
-		Packages: []string{"make"},
+		Packages: []string{makeCommand},
 		Setup:    []SetupCommand{{Command: testSetupCommand}},
 	}
-	assert.NilError(t, prepareDevelopment(project, vmName, &config, nil, options.LimaCommand, nil, nil))
+	assert.NilError(t, prepareDevelopment(developmentPreparationOptions{
+		project:        project,
+		vmName:         vmName,
+		config:         &config,
+		limactlCommand: options.LimaCommand,
+	}))
 
 	database, err := readVMDatabase()
 	assert.NilError(t, err)
@@ -438,7 +470,7 @@ func TestPreparationSkipsReadyAndEmptyGuestPackages(t *testing.T) {
 		wantPackageQueries int
 		wantInstallations  int
 	}{
-		{name: "already installed", packages: []string{"make", "ninja-build"}, packageInstallDone: true, wantPackageQueries: 2},
+		{name: "already installed", packages: []string{makeCommand, ninjaBuildPackage}, packageInstallDone: true, wantPackageQueries: 2},
 		{name: "empty list", packages: []string{}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -448,7 +480,12 @@ func TestPreparationSkipsReadyAndEmptyGuestPackages(t *testing.T) {
 			database.PackageInstallationDone = test.packageInstallDone
 			assert.NilError(t, database.save())
 			config := DevelopmentConfig{Packages: test.packages}
-			err = prepareDevelopment(project, vmName, &config, nil, options.LimaCommand, nil, nil)
+			err = prepareDevelopment(developmentPreparationOptions{
+				project:        project,
+				vmName:         vmName,
+				config:         &config,
+				limactlCommand: options.LimaCommand,
+			})
 			assert.NilError(t, err)
 
 			database, err = readVMDatabase()
@@ -457,7 +494,7 @@ func TestPreparationSkipsReadyAndEmptyGuestPackages(t *testing.T) {
 			installations := 0
 			for _, operation := range database.Operations {
 				guestArguments := unwrapGuestPathArguments(operation[4:])
-				if len(guestArguments) >= 1 && guestArguments[0] == "dpkg-query" {
+				if len(guestArguments) >= 1 && guestArguments[0] == dpkgQueryCommand {
 					packageQueries++
 				}
 				if len(operation) >= 8 && isPackageInstallationCommand(operation[4:]) {
@@ -477,7 +514,7 @@ func TestPreparationReportsBatchPackageFailures(t *testing.T) {
 		noop    bool
 		want    string
 	}{
-		{name: "installation failure", failure: "package-install", want: "cannot install dependencies make, ninja-build with ubuntu/debian backend"},
+		{name: "installation failure", failure: packageInstallStage, want: "cannot install dependencies make, ninja-build with ubuntu/debian backend"},
 		{name: "verification failure", noop: true, want: "installation did not provide the requested package"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -486,8 +523,13 @@ func TestPreparationReportsBatchPackageFailures(t *testing.T) {
 			if test.noop {
 				t.Setenv(vmPackageInstallNoopEnv, "1")
 			}
-			config := DevelopmentConfig{Packages: []string{"make", "ninja-build"}}
-			err := prepareDevelopment(project, vmName, &config, nil, options.LimaCommand, nil, nil)
+			config := DevelopmentConfig{Packages: []string{makeCommand, ninjaBuildPackage}}
+			err := prepareDevelopment(developmentPreparationOptions{
+				project:        project,
+				vmName:         vmName,
+				config:         &config,
+				limactlCommand: options.LimaCommand,
+			})
 			assert.ErrorContains(t, err, test.want)
 		})
 	}
@@ -499,20 +541,20 @@ func TestMakeCommandPassesThroughGuestArgumentsAndExitStatus(t *testing.T) {
 		failure  string
 		wantCode int
 	}{
-		{name: "success", wantCode: 0},
-		{name: "make failure", failure: "connect", wantCode: 23},
+		{name: successTestName, wantCode: 0},
+		{name: "make failure", failure: connectStage, wantCode: 23},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			project, vmName, options := vmFixture(t, "")
 			root := filepath.Dir(project)
 			assert.NilError(t, os.WriteFile(filepath.Join(project, projectConfigName), []byte("packages: []\ncopy_git_config: false\n"), 0o600))
 			t.Setenv("HOME", root)
-			t.Setenv(xdgConfigHomeEnv, filepath.Join(root, "config"))
+			t.Setenv(xdgConfigHomeEnv, filepath.Join(root, configDirectoryName))
 			t.Setenv("PATH", filepath.Dir(options.LimaCommand)+string(os.PathListSeparator)+os.Getenv("PATH"))
 			t.Setenv(vmFailureEnv, test.failure)
 
 			cli := CLI{ProjectState: true}
-			cli.Make.Arguments = []string{"--", "-f", "Makefile", "target with spaces"}
+			cli.Make.Arguments = []string{"--", "-f", makefileName, targetWithSpaces}
 			code, err := runCommand(&cli, makeCommand, project, project)
 			assert.NilError(t, err)
 			assert.Equal(t, code, test.wantCode)
@@ -520,8 +562,8 @@ func TestMakeCommandPassesThroughGuestArgumentsAndExitStatus(t *testing.T) {
 			database, err := readVMDatabase()
 			assert.NilError(t, err)
 			assert.DeepEqual(t, database.Operations[len(database.Operations)-1], []string{
-				"shell", "--workdir", project, vmName, shellCommand, shellCommandFlag, guestPathBootstrapScript, programName,
-				"make", "-f", "Makefile", "target with spaces",
+				limaShellOperation, limaWorkdirFlag, project, vmName, shellCommand, shellCommandFlag, guestPathBootstrapScript, programName,
+				makeCommand, "-f", makefileName, targetWithSpaces,
 			})
 		})
 	}
@@ -534,10 +576,10 @@ func TestShellAndMakeOnlyInstallNodeWhenRequested(t *testing.T) {
 		packages        string
 		wantNodeInstall bool
 	}{
-		{name: "shell without agents", command: "shell", packages: "[]"},
+		{name: "shell without agents", command: limaShellOperation, packages: "[]"},
 		{name: "make without agents", command: makeCommand, packages: "[]"},
-		{name: "shell with requested Node packages", command: "shell", packages: "[nodejs, npm]", wantNodeInstall: true},
-		{name: "make with requested Node packages", command: makeCommand, packages: "[nodejs, npm]", wantNodeInstall: true},
+		{name: "shell with requested Node packages", command: limaShellOperation, packages: nodePackagesFixture, wantNodeInstall: true},
+		{name: "make with requested Node packages", command: makeCommand, packages: nodePackagesFixture, wantNodeInstall: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			project, _, options := vmFixture(t, limaStatusRunning)
@@ -545,14 +587,14 @@ func TestShellAndMakeOnlyInstallNodeWhenRequested(t *testing.T) {
 			content := "packages: " + test.packages + "\ncopy_git_config: false\n"
 			assert.NilError(t, os.WriteFile(filepath.Join(project, projectConfigName), []byte(content), 0o600))
 			t.Setenv("HOME", root)
-			t.Setenv(xdgConfigHomeEnv, filepath.Join(root, "config"))
+			t.Setenv(xdgConfigHomeEnv, filepath.Join(root, configDirectoryName))
 			t.Setenv("PATH", filepath.Dir(options.LimaCommand)+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 			cli := CLI{ProjectState: true}
-			if test.command == "shell" {
-				cli.Shell.Arguments = []string{"--", "true"}
+			if test.command == limaShellOperation {
+				cli.Shell.Arguments = []string{"--", guestConnectionProbe}
 			} else {
-				cli.Make.Arguments = []string{"--", "true"}
+				cli.Make.Arguments = []string{"--", guestConnectionProbe}
 			}
 			code, err := runCommand(&cli, test.command, project, project)
 			assert.NilError(t, err)
@@ -561,7 +603,7 @@ func TestShellAndMakeOnlyInstallNodeWhenRequested(t *testing.T) {
 			database, err := readVMDatabase()
 			assert.NilError(t, err)
 			operationText := joinedOperations(database.Operations)
-			assert.Equal(t, strings.Contains(operationText, "nodejs") && strings.Contains(operationText, "npm"), test.wantNodeInstall)
+			assert.Equal(t, strings.Contains(operationText, nodePackageName) && strings.Contains(operationText, npmCommand), test.wantNodeInstall)
 			assert.Assert(t, !strings.Contains(operationText, "snap"))
 		})
 	}
@@ -576,7 +618,7 @@ func TestInteractiveShellUsesGuestPathBootstrap(t *testing.T) {
 	database, err := readVMDatabase()
 	assert.NilError(t, err)
 	assert.DeepEqual(t, database.Operations[len(database.Operations)-1], []string{
-		"shell", "--workdir", project, vmName, shellCommand, shellCommandFlag, guestPathBootstrapScript, programName,
+		"shell", limaWorkdirFlag, project, vmName, shellCommand, shellCommandFlag, guestPathBootstrapScript, programName,
 		shellCommand, shellCommandFlag, "exec \"${SHELL:-/bin/sh}\" -l",
 	})
 }
@@ -599,13 +641,13 @@ func TestCreateVM(t *testing.T) {
 			} else {
 				assert.Equal(t, instance.Status, limaStatusRunning)
 				assert.Equal(t, database.VMs[name].SetupCount, 1)
-				assert.Equal(t, database.VMs[name].Config["cpus"], float64(4))
-				assert.Equal(t, database.VMs[name].Config["memory"], "8GiB")
+				assert.Equal(t, database.VMs[name].Config[limaCPUsKey], float64(4))
+				assert.Equal(t, database.VMs[name].Config[limaMemoryKey], limaMemoryFixtureValue)
 				assert.Equal(t, database.VMs[name].Config[limaBaseKey], limaDefaultTemplate)
 				assert.DeepEqual(t, database.CreateWorkingDirectories, []string{project})
 				assert.DeepEqual(t, database.Operations[0], []string{
-					createCommandName, limaNoninteractiveFlag, "--name", name,
-					"--mount-only", project + limaMountWritableSuffix, "-",
+					createCommandName, limaNoninteractiveFlag, limaNameFlag, name,
+					limaMountOnlyFlag, project + limaMountWritableSuffix, "-",
 				})
 			}
 		})
@@ -623,15 +665,15 @@ func TestCreationAndRecreationUseGoldenInputAndMountArguments(t *testing.T) {
 	}{
 		{
 			name:     "creation with Fedora template",
-			input:    "fedora/input.yaml",
-			expected: "fedora/expected.yaml",
+			input:    fedoraInputFixture,
+			expected: fedoraExpectedFixture,
 		},
 		{
 			name:        "recreation with relative template and shared state",
 			status:      limaStatusRunning,
 			recreate:    true,
-			input:       "relative-reference/input.yaml",
-			expected:    "relative-reference/expected.yaml",
+			input:       relativeInputFixture,
+			expected:    relativeExpectedFixture,
 			sharedState: true,
 		},
 	} {
@@ -669,7 +711,7 @@ func TestCreationAndRecreationUseGoldenInputAndMountArguments(t *testing.T) {
 			assert.NilError(t, err)
 			mountArguments, err := MountArguments(mountPaths)
 			assert.NilError(t, err)
-			expectedOperation := []string{createCommandName, limaNoninteractiveFlag, "--name", creationName}
+			expectedOperation := []string{createCommandName, limaNoninteractiveFlag, limaNameFlag, creationName}
 			expectedOperation = append(expectedOperation, mountArguments...)
 			expectedOperation = append(expectedOperation, "-")
 			assert.DeepEqual(t, createOperations[0], expectedOperation)
@@ -695,11 +737,11 @@ func TestRecreateVM(t *testing.T) {
 				for _, operation := range database.Operations {
 					stages = append(stages, operation[0])
 				}
-				expected := []string{"rename", "create", "start", "shell", "stop"}
+				expected := []string{limaRenameOperation, createCommandName, limaStartOperation, limaShellOperation, stopCommandName}
 				if status == limaStatusRunning {
-					expected = append(expected, "stop")
+					expected = append(expected, stopCommandName)
 				}
-				expected = append(expected, "rename", "rename", "start", "shell", "delete")
+				expected = append(expected, limaRenameOperation, limaRenameOperation, limaStartOperation, limaShellOperation, deleteCommandName)
 				assert.DeepEqual(t, stages, expected)
 			}
 		})
@@ -707,13 +749,13 @@ func TestRecreateVM(t *testing.T) {
 }
 
 func TestRecreateFailures(t *testing.T) {
-	for _, failure := range []string{"rename-help", "create", "start-candidate", "setup", "stop-candidate", "stop-final", "rename-old-partial", "rename-new-partial", "start-final", "connect", "delete-backup"} {
+	for _, failure := range []string{renameHelpStage, createCommandName, "start-candidate", "setup", "stop-candidate", "stop-final", "rename-old-partial", "rename-new-partial", "start-final", connectStage, deleteBackupStage} {
 		t.Run(failure, func(t *testing.T) {
 			project, name, options := vmFixture(t, limaStatusRunning)
 			t.Setenv(vmFailureEnv, failure)
 			options.Recreate = true
 			_, err := CreateVM(project, options)
-			if failure == "connect" {
+			if failure == connectStage {
 				assert.ErrorContains(t, err, "cannot connect")
 			} else {
 				assert.ErrorContains(t, err, "23")
@@ -724,9 +766,9 @@ func TestRecreateFailures(t *testing.T) {
 			case strings.HasSuffix(failure, "-partial"):
 				assert.Equal(t, len(database.VMs), 3)
 				for _, operation := range database.Operations {
-					assert.Assert(t, operation[0] != "delete")
+					assert.Assert(t, operation[0] != deleteCommandName)
 				}
-			case failure == "delete-backup":
+			case failure == deleteBackupStage:
 				assert.Equal(t, len(database.VMs), 2)
 				assert.Equal(t, database.VMs[name].ID, testReplacementID)
 				assert.Equal(t, database.VMs[name].Status, limaStatusRunning)
@@ -740,7 +782,7 @@ func TestRecreateFailures(t *testing.T) {
 }
 
 func TestRecreateParsing(t *testing.T) {
-	for _, command := range []string{createCommandName, "shell", makeCommand, codexAgentName, claudeAgentName, openCodeAgentName, "update", "config", "status", stopCommandName, deleteCommandName} {
+	for _, command := range []string{createCommandName, limaShellOperation, makeCommand, codexAgentName, claudeAgentName, openCodeAgentName, updateCommandName, configCommandName, statusCommandName, stopCommandName, deleteCommandName} {
 		t.Run(command, func(t *testing.T) {
 			for _, before := range []bool{true, false} {
 				cli := CLI{}
@@ -748,18 +790,18 @@ func TestRecreateParsing(t *testing.T) {
 				assert.NilError(t, err)
 				arguments := []string{command}
 				if before {
-					arguments = append([]string{"--recreate"}, arguments...)
+					arguments = append([]string{recreateFlag}, arguments...)
 				} else {
-					arguments = append(arguments, "--recreate")
+					arguments = append(arguments, recreateFlag)
 				}
-				if command == "update" {
+				if command == updateCommandName {
 					arguments = append(arguments, codexAgentName)
 				}
 				context, err := parser.Parse(arguments)
 				assert.NilError(t, err)
 				assert.Equal(t, cli.Recreate, true)
 				_, err = requestedAgents(&cli, commandName(context))
-				if command == "config" || command == "status" || command == stopCommandName || command == deleteCommandName {
+				if command == configCommandName || command == statusCommandName || command == stopCommandName || command == deleteCommandName {
 					assert.ErrorContains(t, err, "--recreate is only valid")
 				} else {
 					assert.NilError(t, err)
@@ -770,20 +812,20 @@ func TestRecreateParsing(t *testing.T) {
 	cli := CLI{}
 	parser, err := newParser(&cli)
 	assert.NilError(t, err)
-	_, err = parser.Parse([]string{codexAgentName, "--", "--recreate"})
+	_, err = parser.Parse([]string{codexAgentName, "--", recreateFlag})
 	assert.NilError(t, err)
 	assert.Equal(t, cli.Recreate, false)
-	assert.DeepEqual(t, forwardedArguments(cli.Codex.Arguments), []string{"--recreate"})
+	assert.DeepEqual(t, forwardedArguments(cli.Codex.Arguments), []string{recreateFlag})
 }
 
 func TestMakeParsing(t *testing.T) {
 	cli := CLI{}
 	parser, err := newParser(&cli)
 	assert.NilError(t, err)
-	context, err := parser.Parse([]string{makeCommand, "--", "-f", "Makefile", "target with spaces"})
+	context, err := parser.Parse([]string{makeCommand, "--", "-f", makefileName, targetWithSpaces})
 	assert.NilError(t, err)
 	assert.Equal(t, commandName(context), makeCommand)
-	assert.DeepEqual(t, forwardedArguments(cli.Make.Arguments), []string{"-f", "Makefile", "target with spaces"})
+	assert.DeepEqual(t, forwardedArguments(cli.Make.Arguments), []string{"-f", makefileName, targetWithSpaces})
 
 	cli.WithAgent = []string{codexAgentName}
 	_, err = requestedAgents(&cli, makeCommand)
@@ -845,7 +887,7 @@ func TestRecreateInstallingIsRejected(t *testing.T) {
 }
 
 func TestPreparationRecreatesOnce(t *testing.T) {
-	for _, command := range []string{"prepare", "shell", "update", "agents"} {
+	for _, command := range []string{prepareCommandName, limaShellOperation, updateCommandName, configAgents} {
 		t.Run(command, func(t *testing.T) {
 			project, name, options := vmFixture(t, limaStatusRunning)
 			host := filepath.Join(filepath.Dir(project), "host")
@@ -854,14 +896,19 @@ func TestPreparationRecreatesOnce(t *testing.T) {
 			options.Recreate = true
 			var err error
 			switch command {
-			case "prepare":
+			case prepareCommandName:
 				_, err = PrepareVM(project, options)
-			case "shell":
-				_, err = OpenShell(project, []string{"true"}, project, options)
-			case "update":
+			case limaShellOperation:
+				_, err = OpenShell(project, []string{guestConnectionProbe}, project, options)
+			case updateCommandName:
 				_, err = InstallAgent(project, codexAgentName, true, options)
-			case "agents":
-				_, err = PrepareAgents(project, codexAgentName, nil, []string{}, options)
+			case configAgents:
+				_, err = PrepareAgents(AgentPreparationOptions{
+					Project:          project,
+					SelectedAgent:    codexAgentName,
+					TrustDirectories: []string{},
+					Workflow:         options,
+				})
 			}
 			assert.NilError(t, err)
 			database, err := readVMDatabase()
@@ -929,8 +976,8 @@ func TestAgentInstallationReportsRuntimeFailures(t *testing.T) {
 		{
 			name:        "failing node",
 			environment: vmNodeRuntimeModeEnv,
-			value:       "failing",
-			want:        []string{"guest executable node is present but failed", "node runtime failed"},
+			value:       nodeRuntimeFailureMode,
+			want:        []string{"guest executable node is present but failed", nodeRuntimeFailureMessage},
 		},
 		{
 			name:        "incompatible engine",

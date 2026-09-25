@@ -5,12 +5,18 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"gotest.tools/v3/assert"
+)
+
+const (
+	primaryTokenValue   = "primary"
+	malformedTokenValue = "bad\nvalue"
 )
 
 func writeGitHubExecutable(t *testing.T, body string) string {
@@ -31,11 +37,11 @@ func TestGitHubTokenResolutionPrecedence(t *testing.T) {
 		wantError      string
 		wantInvocation bool
 	}{
-		{name: "primary environment", environment: map[string]string{githubTokenEnvironment: "primary"}, command: true, wantToken: "primary"},
-		{name: "fallback environment", environment: map[string]string{githubFallbackTokenEnvironment: "fallback"}, command: true, wantToken: "fallback"},
-		{name: "empty primary falls back", environment: map[string]string{githubTokenEnvironment: "", githubFallbackTokenEnvironment: "fallback"}, command: true, wantToken: "fallback"},
-		{name: "malformed primary does not fall back", environment: map[string]string{githubTokenEnvironment: "bad\nvalue", githubFallbackTokenEnvironment: "fallback"}, command: true, wantError: githubTokenEnvironment},
-		{name: "malformed fallback does not use command", environment: map[string]string{githubFallbackTokenEnvironment: "bad\nvalue"}, command: true, wantError: githubFallbackTokenEnvironment},
+		{name: "primary environment", environment: map[string]string{githubTokenEnvironment: primaryTokenValue}, command: true, wantToken: primaryTokenValue},
+		{name: "fallback environment", environment: map[string]string{githubFallbackTokenEnvironment: fallbackTokenValue}, command: true, wantToken: fallbackTokenValue},
+		{name: "empty primary falls back", environment: map[string]string{githubTokenEnvironment: "", githubFallbackTokenEnvironment: fallbackTokenValue}, command: true, wantToken: fallbackTokenValue},
+		{name: "malformed primary does not fall back", environment: map[string]string{githubTokenEnvironment: malformedTokenValue, githubFallbackTokenEnvironment: fallbackTokenValue}, command: true, wantError: githubTokenEnvironment},
+		{name: "malformed fallback does not use command", environment: map[string]string{githubFallbackTokenEnvironment: malformedTokenValue}, command: true, wantError: githubFallbackTokenEnvironment},
 		{name: "missing credentials", wantError: "no token was provided"},
 		{name: "disabled", environment: map[string]string{githubTokenEnvironment: "manual"}, disabled: true, command: true, wantToken: ""},
 	}
@@ -68,12 +74,12 @@ func TestGitHubTokenCommandOutputValidation(t *testing.T) {
 		wantToken string
 		wantError string
 	}{
-		{name: "LF", body: "printf 'token\\n'", wantToken: "token"},
-		{name: "CRLF", body: "printf 'token\\r\\n'", wantToken: "token"},
-		{name: "no newline", body: "printf token", wantToken: "token"},
-		{name: "empty", body: "printf '\\n'", wantError: "invalid"},
-		{name: "multiple lines", body: "printf 'token\\nsecond\\n'", wantError: "invalid"},
-		{name: "control character", body: "printf 'token\\tvalue'", wantError: "invalid"},
+		{name: "LF", body: "printf 'token\\n'", wantToken: tokenArgument},
+		{name: "CRLF", body: "printf 'token\\r\\n'", wantToken: tokenArgument},
+		{name: "no newline", body: "printf token", wantToken: tokenArgument},
+		{name: emptyTestName, body: "printf '\\n'", wantError: invalidTestError},
+		{name: "multiple lines", body: "printf 'token\\nsecond\\n'", wantError: invalidTestError},
+		{name: "control character", body: "printf 'token\\tvalue'", wantError: invalidTestError},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -96,7 +102,7 @@ func TestGitHubTokenCommandUsesArgumentsHomeAndClosedStdin(t *testing.T) {
 	unsafeArgument := "$(touch " + filepath.Join(root, "expanded") + ")"
 	token, err := resolveGitHubToken(context.Background(), GitHubConfig{Enabled: true, TokenCommand: []string{command, unsafeArgument, "with spaces"}}, nil, root)
 	assert.NilError(t, err)
-	assert.Equal(t, token, "token")
+	assert.Equal(t, token, tokenArgument)
 	workingDirectory, err := os.ReadFile(filepath.Join(root, "working-directory"))
 	assert.NilError(t, err)
 	assert.Equal(t, strings.TrimSpace(string(workingDirectory)), root)
@@ -178,14 +184,9 @@ func TestGitHubTokenResolutionSkipsExistingNoopCreate(t *testing.T) {
 	assert.Assert(t, os.IsNotExist(statErr))
 }
 
-func operationHasEnvironment(operation []string, name string, value string) bool {
+func operationHasEnvironment(operation []string, name, value string) bool {
 	want := name + "=" + value
-	for _, argument := range operation {
-		if argument == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(operation, want)
 }
 
 func TestGitHubPreparationInstallsDependenciesAndForwardsToken(t *testing.T) {
@@ -199,12 +200,12 @@ func TestGitHubPreparationInstallsDependenciesAndForwardsToken(t *testing.T) {
 	options.Development = &config
 	options.Environment = map[string]string{
 		gitConfigCountEnv:             "1",
-		gitConfigKeyEnvPrefix + "0":   "user.name",
-		gitConfigValueEnvPrefix + "0": "Example",
+		gitConfigKeyEnvPrefix + "0":   gitUserNameKey,
+		gitConfigValueEnvPrefix + "0": exampleUserName,
 	}
 	options.github = &githubWorkflow{ctx: context.Background(), token: "test-token"}
 
-	_, err := OpenShell(project, []string{"printf", "shell"}, project, options)
+	_, err := OpenShell(project, []string{printfCommand, limaShellOperation}, project, options)
 	assert.NilError(t, err)
 	database, err := readVMDatabase()
 	assert.NilError(t, err)
@@ -230,7 +231,7 @@ func TestGitHubPreparationInstallsDependenciesAndForwardsToken(t *testing.T) {
 			setupIndex = index
 			assert.Assert(t, operationHasEnvironment(operation, githubTokenEnvironment, "test-token"))
 			assert.Assert(t, operationHasEnvironment(operation, gitConfigCountEnv, "5"))
-			assert.Assert(t, operationHasEnvironment(operation, gitConfigKeyEnvPrefix+"0", "user.name"))
+			assert.Assert(t, operationHasEnvironment(operation, gitConfigKeyEnvPrefix+"0", gitUserNameKey))
 		}
 	}
 	assert.Assert(t, packageIndex >= 0)
@@ -252,7 +253,12 @@ func TestGitHubAgentCommandForwardsToken(t *testing.T) {
 	options.Development = &config
 	options.github = &githubWorkflow{ctx: context.Background(), token: "agent-token"}
 
-	_, err := RunAgent(project, codexAgentName, []string{"--version"}, nil, project, options)
+	_, err := RunAgent(project, AgentRunOptions{
+		AgentName:        codexAgentName,
+		Arguments:        []string{"--version"},
+		WorkingDirectory: project,
+		Workflow:         options,
+	})
 	assert.NilError(t, err)
 	database, err := readVMDatabase()
 	assert.NilError(t, err)
@@ -265,10 +271,7 @@ func TestGitHubConcurrentInvocationsKeepTokensSeparate(t *testing.T) {
 	results := make(chan string, len(tokens))
 	var waitGroup sync.WaitGroup
 	for _, token := range tokens {
-		token := token
-		waitGroup.Add(1)
-		go func() {
-			defer waitGroup.Done()
+		waitGroup.Go(func() {
 			workflow := &githubWorkflow{ctx: context.Background(), token: token}
 			environment, err := workflow.environment(map[string]string{"INVOCATION": token})
 			if err != nil {
@@ -280,7 +283,7 @@ func TestGitHubConcurrentInvocationsKeepTokensSeparate(t *testing.T) {
 				return
 			}
 			results <- token
-		}()
+		})
 	}
 	waitGroup.Wait()
 	close(results)
@@ -295,7 +298,7 @@ func TestGitHubConcurrentInvocationsKeepTokensSeparate(t *testing.T) {
 func TestGitHubAgentWrapperInheritsToken(t *testing.T) {
 	root := t.TempDir()
 	marker := filepath.Join(root, "token")
-	agentPath := filepath.Join(root, "agent")
+	agentPath := filepath.Join(root, agentTestName)
 	agentScript := "#!/bin/sh\nprintf '%s' \"$GH_TOKEN\" > " + shellQuote(marker) + "\n"
 	assert.NilError(t, os.WriteFile(agentPath, []byte(agentScript), 0o700))
 	content, err := AgentWrapperContent(root, codexAgentName, agentPath)

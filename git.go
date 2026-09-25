@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"os/exec"
 	"os/user"
@@ -30,6 +31,7 @@ const (
 	gitConfigCountEnv       = "GIT_CONFIG_COUNT"
 	gitConfigKeyEnvPrefix   = "GIT_CONFIG_KEY_"
 	gitConfigValueEnvPrefix = "GIT_CONFIG_VALUE_"
+	gitConfigSubcommand     = "config"
 	githubHTTPSBase         = "https://github.com/"
 	githubCredentialKey     = "credential.https://github.com.helper"
 	githubGitHelper         = "!gh auth git-credential"
@@ -51,6 +53,14 @@ type gitURLRewrite struct {
 	key   string
 	value string
 	base  string
+}
+
+type gitPreparationOptions struct {
+	project        string
+	vmName         string
+	limactlCommand string
+	forwardGPG     bool
+	validateGitHub bool
 }
 
 func parseGitConfigEnvironment(environment map[string]string) ([]gitConfigEnvironmentEntry, error) {
@@ -104,7 +114,7 @@ func parseGitConfigEnvironment(environment map[string]string) ([]gitConfigEnviro
 		}
 	}
 	entries := make([]gitConfigEnvironmentEntry, count)
-	for index := 0; index < count; index++ {
+	for index := range count {
 		keyName, keyPresent := keyNames[index]
 		valueName, valuePresent := valueNames[index]
 		if !keyPresent || !valuePresent {
@@ -134,9 +144,7 @@ func githubGitEnvironment(environment map[string]string) (map[string]string, err
 		return nil, err
 	}
 	result := make(map[string]string, len(environment)+5)
-	for name, value := range environment {
-		result[name] = value
-	}
+	maps.Copy(result, environment)
 	managed := []gitConfigEnvironmentEntry{
 		{key: githubCredentialKey, value: ""},
 		{key: githubCredentialKey, value: githubGitHelper},
@@ -191,20 +199,20 @@ func copiedGitURLRewrites(copies map[string][]byte) ([]gitURLRewrite, error) {
 			slog.Debug("skipping copied Git file that is not a Git configuration", "path", relative, "error", err)
 			continue
 		}
-		for _, entry := range bytes.Split(entries, []byte{0}) {
+		for entry := range bytes.SplitSeq(entries, []byte{0}) {
 			if len(entry) == 0 {
 				continue
 			}
-			separator := bytes.IndexByte(entry, '\n')
-			if separator < 0 {
+			before, after, ok := bytes.Cut(entry, []byte{'\n'})
+			if !ok {
 				return nil, ljaError("cannot inspect copied Git configuration %s: malformed entry", relative)
 			}
-			key := string(entry[:separator])
+			key := string(before)
 			base, present := gitURLRewriteBase(key)
 			if !present {
 				continue
 			}
-			rewrites = append(rewrites, gitURLRewrite{path: relative, key: key, value: string(entry[separator+1:]), base: base})
+			rewrites = append(rewrites, gitURLRewrite{path: relative, key: key, value: string(after), base: base})
 		}
 	}
 	return rewrites, nil
@@ -237,7 +245,7 @@ type gitReplacement struct {
 }
 
 func hostGitConfig(path string, arguments ...string) ([]byte, error) {
-	commandArguments := []string{"config", "--file", path, "--no-includes"}
+	commandArguments := []string{gitConfigSubcommand, "--file", path, "--no-includes"}
 	commandArguments = append(commandArguments, arguments...)
 	command := exec.Command(gitCommand, commandArguments...)
 	var stdout bytes.Buffer
@@ -245,8 +253,7 @@ func hostGitConfig(path string, arguments ...string) ([]byte, error) {
 	command.Stdout = &stdout
 	command.Stderr = &stderr
 	if err := command.Run(); err != nil {
-		var exitError *exec.ExitError
-		if errors.As(err, &exitError) {
+		if exitError, ok := errors.AsType[*exec.ExitError](err); ok {
 			if diagnostic := strings.TrimSpace(stderr.String()); diagnostic != "" {
 				return nil, ljaError("cannot process Git config %s: Git exited %d: %s", path, exitError.ExitCode(), diagnostic)
 			}
@@ -257,7 +264,7 @@ func hostGitConfig(path string, arguments ...string) ([]byte, error) {
 	return stdout.Bytes(), nil
 }
 
-func sourceDestination(hostHome string, source string, destinations map[string]string) (string, error) {
+func sourceDestination(hostHome, source string, destinations map[string]string) (string, error) {
 	relative, err := filepath.Rel(hostHome, source)
 	insideHome := err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 	if !insideHome {
@@ -272,7 +279,7 @@ func sourceDestination(hostHome string, source string, destinations map[string]s
 	return relative, nil
 }
 
-func expandedGitPath(value string, hostHome string) (string, error) {
+func expandedGitPath(value, hostHome string) (string, error) {
 	if value == "~" || strings.HasPrefix(value, "~/") {
 		return hostHome + value[1:], nil
 	}
@@ -280,8 +287,8 @@ func expandedGitPath(value string, hostHome string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if strings.HasPrefix(value, "~") {
-		userValue := strings.TrimPrefix(value, "~")
+	if after, ok := strings.CutPrefix(value, "~"); ok {
+		userValue := after
 		userName, userPath, hasPath := strings.Cut(userValue, "/")
 		userRecord, lookupErr := user.Lookup(userName)
 		if lookupErr != nil || userRecord.HomeDir == "" {
@@ -379,16 +386,16 @@ func gitConfigCopiesForGPG(hostHome string, forwardGPG bool) (map[string][]byte,
 			return "", gitErr
 		}
 		replacements := make(map[gitReplacement]bool)
-		for _, entry := range bytes.Split(entries, []byte{0}) {
+		for entry := range bytes.SplitSeq(entries, []byte{0}) {
 			if len(entry) == 0 {
 				continue
 			}
-			separator := bytes.IndexByte(entry, '\n')
+			before, after, ok := bytes.Cut(entry, []byte{'\n'})
 			keyBytes := entry
 			valueBytes := []byte{}
-			if separator >= 0 {
-				keyBytes = entry[:separator]
-				valueBytes = entry[separator+1:]
+			if ok {
+				keyBytes = before
+				valueBytes = after
 			}
 			key := string(keyBytes)
 			if forwardGPG && (key == "gpg.program" || key == "gpg.openpgp.program") {
@@ -397,13 +404,13 @@ func gitConfigCopiesForGPG(hostHome string, forwardGPG bool) (map[string][]byte,
 				}
 			}
 			isInclude := key == gitIncludePathKey || (strings.HasPrefix(key, gitIncludeIfPrefix) && strings.HasSuffix(key, gitPathKeySuffix))
-			if key == gitExcludesFileKey && (separator < 0 || len(valueBytes) == 0) {
+			if key == gitExcludesFileKey && (!ok || len(valueBytes) == 0) {
 				continue
 			}
 			if !isInclude && key != gitExcludesFileKey {
 				continue
 			}
-			if separator < 0 || len(valueBytes) == 0 {
+			if !ok || len(valueBytes) == 0 {
 				delete(visiting, identity)
 				return "", ljaError("empty Git include path in %s", source)
 			}
@@ -438,7 +445,7 @@ func gitConfigCopiesForGPG(hostHome string, forwardGPG bool) (map[string][]byte,
 		for replacement := range replacements {
 			replacementList = append(replacementList, replacement)
 		}
-		sort.Slice(replacementList, func(left int, right int) bool {
+		sort.Slice(replacementList, func(left, right int) bool {
 			if replacementList[left].key != replacementList[right].key {
 				return replacementList[left].key < replacementList[right].key
 			}
@@ -469,10 +476,6 @@ func gitConfigCopiesForGPG(hostHome string, forwardGPG bool) (map[string][]byte,
 	return copies, nil
 }
 
-func gitConfigCopies(hostHome string) (map[string][]byte, error) {
-	return GitConfigCopies(hostHome)
-}
-
 func shellQuote(value string) string {
 	if value == "" {
 		return "''"
@@ -494,10 +497,10 @@ func GitConfigWriteScript(relative string) (string, error) {
 		}
 	}
 	lines := []string{
-		"set -eu",
+		shellStrictScript,
 		"umask 077",
 		"cd -- \"$HOME\"",
-		"temporary_path=",
+		temporaryPathAssignment,
 		"trap 'if [ -n \"$temporary_path\" ]; then rm -f -- \"$temporary_path\"; fi' EXIT",
 	}
 	for _, part := range parts[:len(parts)-1] {
@@ -505,7 +508,7 @@ func GitConfigWriteScript(relative string) (string, error) {
 		lines = append(lines,
 			fmt.Sprintf("if [ -L %s ]; then echo 'Git config parent is a symlink' >&2; exit 1; fi", component),
 			fmt.Sprintf("if [ ! -d %s ]; then mkdir -- %s; fi", component, component),
-			fmt.Sprintf("cd -- %s", component),
+			"cd -- "+component,
 		)
 	}
 	filename := shellQuote("./" + parts[len(parts)-1])
@@ -513,35 +516,31 @@ func GitConfigWriteScript(relative string) (string, error) {
 		fmt.Sprintf("if [ -L %s ] || [ -d %s ]; then echo 'Invalid Git config destination' >&2; exit 1; fi", filename, filename),
 		"temporary_path=$(mktemp ./"+gitConfigWriteTemporary+")",
 		"cat > \"$temporary_path\"",
-		fmt.Sprintf("mv -f -- \"$temporary_path\" %s", filename),
+		"mv -f -- \"$temporary_path\" "+filename,
 		"temporary_path=",
 	)
 	return strings.Join(lines, "\n") + "\n", nil
 }
 
-func gitConfigWriteScript(relative string) (string, error) {
-	return GitConfigWriteScript(relative)
-}
-
-func prepareGitInternal(project string, vmName string, limactlCommand string, forwardGPG bool, validateGitHub bool) error {
+func prepareGitInternal(options gitPreparationOptions) error {
 	home, err := homeDirectory()
 	if err != nil {
-		return ljaError("cannot prepare Git in VM %s: %w", vmName, err)
+		return ljaError("cannot prepare Git in VM %s: %w", options.vmName, err)
 	}
-	copies, err := gitConfigCopiesForGPG(home, forwardGPG)
+	copies, err := gitConfigCopiesForGPG(home, options.forwardGPG)
 	if err != nil {
-		return ljaError("cannot prepare Git in VM %s: %w", vmName, err)
+		return ljaError("cannot prepare Git in VM %s: %w", options.vmName, err)
 	}
-	if validateGitHub {
+	if options.validateGitHub {
 		if err := githubGitURLRewriteConflicts(copies); err != nil {
-			return ljaError("cannot prepare GitHub integration in VM %s: %w", vmName, err)
+			return ljaError("cannot prepare GitHub integration in VM %s: %w", options.vmName, err)
 		}
 	}
 	relatives := make([]string, 0, len(copies))
 	for relative := range copies {
 		relatives = append(relatives, relative)
 	}
-	sort.Slice(relatives, func(left int, right int) bool {
+	sort.Slice(relatives, func(left, right int) bool {
 		leftRoot := relatives[left] == gitConfigName
 		rightRoot := relatives[right] == gitConfigName
 		if leftRoot != rightRoot {
@@ -552,22 +551,33 @@ func prepareGitInternal(project string, vmName string, limactlCommand string, fo
 	for _, relative := range relatives {
 		script, err := GitConfigWriteScript(relative)
 		if err != nil {
-			return ljaError("cannot prepare Git in VM %s: %w", vmName, err)
+			return ljaError("cannot prepare Git in VM %s: %w", options.vmName, err)
 		}
-		options := defaultProcessOptions(limactlCommand)
-		options.hasInput = true
-		options.inputData = copies[relative]
-		if _, err := runGuest(project, vmName, []string{shellCommand, shellCommandFlag, script}, options, nil); err != nil {
-			return ljaError("cannot prepare Git in VM %s: %w", vmName, err)
+		processOptions := defaultProcessOptions(options.limactlCommand)
+		processOptions.hasInput = true
+		processOptions.inputData = copies[relative]
+		if _, err := runGuest(options.project, options.vmName, []string{shellCommand, shellCommandFlag, script}, guestExecution(processOptions, nil)); err != nil {
+			return ljaError("cannot prepare Git in VM %s: %w", options.vmName, err)
 		}
 	}
 	return nil
 }
 
-func prepareGit(project string, vmName string, limactlCommand string, forwarding ...bool) error {
-	return prepareGitInternal(project, vmName, limactlCommand, len(forwarding) > 0 && forwarding[0], false)
+func prepareGit(project, vmName, limactlCommand string, forwarding ...bool) error {
+	return prepareGitInternal(gitPreparationOptions{
+		project:        project,
+		vmName:         vmName,
+		limactlCommand: limactlCommand,
+		forwardGPG:     len(forwarding) > 0 && forwarding[0],
+	})
 }
 
-func prepareGitWithGitHub(project string, vmName string, limactlCommand string, forwarding ...bool) error {
-	return prepareGitInternal(project, vmName, limactlCommand, len(forwarding) > 0 && forwarding[0], true)
+func prepareGitWithGitHub(project, vmName, limactlCommand string, forwarding ...bool) error {
+	return prepareGitInternal(gitPreparationOptions{
+		project:        project,
+		vmName:         vmName,
+		limactlCommand: limactlCommand,
+		forwardGPG:     len(forwarding) > 0 && forwarding[0],
+		validateGitHub: true,
+	})
 }

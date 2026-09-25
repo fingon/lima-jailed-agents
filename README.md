@@ -29,7 +29,8 @@ make dep
 On macOS this uses Homebrew for Go and pipx. On Ubuntu it uses the system
 packages (`golang-go` and `pipx`) and installs prek with pipx. The target leaves
 existing Go, pipx, and prek installations unchanged, and installs the
-repository hook.
+repository hook. Go linting uses golangci-lint (version managed in `go.mod`),
+invoked by prek via the pre-commit hooks.
 
 Run all checks with:
 

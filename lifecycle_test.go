@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"gotest.tools/v3/assert"
@@ -15,11 +16,19 @@ const (
 	lifecycleListFailEnv      = "LJA_TEST_LIST_FAIL"
 	lifecycleOperationFailEnv = "LJA_TEST_OPERATION_FAIL"
 	lifecycleOtherVM          = "unrelated"
+	deleteFailureScenario     = "delete-failure"
+	allFlag                   = "--all"
+	limaNameJSONKey           = "name"
+	projectFlag               = "--project"
+	allStatesScenario         = "all-states"
+	listFailureScenario       = "list-failure"
+	malformedScenario         = "malformed"
+	unknownStatusScenario     = "unknown-status"
 )
 
 func TestLifecycleParsing(t *testing.T) {
-	for _, command := range []string{"stop", "delete"} {
-		for _, flag := range []string{"", "-a", "--all"} {
+	for _, command := range []string{stopCommandName, deleteCommandName} {
+		for _, flag := range []string{"", "-a", allFlag} {
 			t.Run(command+flag, func(t *testing.T) {
 				cli := CLI{}
 				parser, err := newParser(&cli)
@@ -52,8 +61,8 @@ func lifecycleFixture(t *testing.T, instances []LimaInstance) (string, string) {
 	entries := make([]map[string]any, 0, len(instances))
 	for _, instance := range instances {
 		entries = append(entries, map[string]any{
-			"name": instance.Name, "status": instance.Status,
-			"config": map[string]any{"mounts": []any{}},
+			limaNameJSONKey: instance.Name, limaStatusKey: instance.Status,
+			limaConfigKey: map[string]any{limaMountsKey: []any{}},
 		})
 	}
 	payload, err := json.Marshal(entries)
@@ -69,7 +78,7 @@ func lifecycleFixture(t *testing.T, instances []LimaInstance) (string, string) {
 	return command, log
 }
 
-func assertLifecycleLog(t *testing.T, path string, expected string) {
+func assertLifecycleLog(t *testing.T, path, expected string) {
 	t.Helper()
 	actual, err := os.ReadFile(path)
 	assert.NilError(t, err)
@@ -98,8 +107,8 @@ func TestDeleteProject(t *testing.T) {
 }
 
 func TestBulkLifecycle(t *testing.T) {
-	for _, command := range []string{"stop", "delete"} {
-		for _, flag := range []string{"-a", "--all"} {
+	for _, command := range []string{stopCommandName, deleteCommandName} {
+		for _, flag := range []string{"-a", allFlag} {
 			t.Run(command+flag, func(t *testing.T) {
 				running := vmNamePrefix + "running"
 				stopped := vmNamePrefix + "stopped"
@@ -108,9 +117,9 @@ func TestBulkLifecycle(t *testing.T) {
 					{Name: lifecycleOtherVM, Status: limaStatusRunning},
 					{Name: stopped, Status: limaStatusStopped},
 				})
-				assert.Equal(t, Main([]string{"--project", "/nonexistent/lja-project", command, flag}), 0)
+				assert.Equal(t, Main([]string{projectFlag, "/nonexistent/lja-project", command, flag}), 0)
 				expected := "stop\n" + running + "\n"
-				if command == "delete" {
+				if command == deleteCommandName {
 					expected = "delete\n-f\n" + running + "\ndelete\n-f\n" + stopped + "\n"
 				}
 				assertLifecycleLog(t, log, expected)
@@ -120,34 +129,37 @@ func TestBulkLifecycle(t *testing.T) {
 }
 
 func TestDeleteAllStatesAndFailures(t *testing.T) {
-	for _, scenario := range []string{"all-states", "empty", "list-failure", "delete-failure", "malformed", "unknown-status"} {
+	for _, scenario := range []string{allStatesScenario, emptyTestName, listFailureScenario, deleteFailureScenario, malformedScenario, unknownStatusScenario} {
 		t.Run(scenario, func(t *testing.T) {
 			instances := []LimaInstance{}
 			expected := ""
-			if scenario != "empty" {
+			if scenario != emptyTestName {
+				var expectedSb128 strings.Builder
 				for _, status := range []string{limaStatusRunning, limaStatusStopped, limaStatusBroken, limaStatusInstalling, limaStatusUninitialized} {
 					name := vmNamePrefix + status
 					instances = append(instances, LimaInstance{Name: name, Status: status})
-					expected += "delete\n-f\n" + name + "\n"
+					_, writeErr := expectedSb128.WriteString("delete\n-f\n" + name + "\n")
+					assert.NilError(t, writeErr)
 				}
+				expected += expectedSb128.String()
 			}
-			if scenario == "unknown-status" {
+			if scenario == unknownStatusScenario {
 				instances[0].Status = "Unknown"
 			}
 			command, log := lifecycleFixture(t, instances)
 			switch scenario {
-			case "list-failure":
+			case listFailureScenario:
 				t.Setenv(lifecycleListFailEnv, "1")
-			case "delete-failure":
+			case deleteFailureScenario:
 				t.Setenv(lifecycleOperationFailEnv, "1")
-			case "malformed":
-				assert.NilError(t, os.WriteFile(os.Getenv(lifecycleListEnv), []byte("invalid"), 0o600))
+			case malformedScenario:
+				assert.NilError(t, os.WriteFile(os.Getenv(lifecycleListEnv), []byte(invalidTestError), 0o600))
 			}
 			err := DeleteAllVMs(command)
 			switch scenario {
-			case "all-states", "empty":
+			case allStatesScenario, emptyTestName:
 				assert.NilError(t, err)
-			case "delete-failure":
+			case deleteFailureScenario:
 				assert.ErrorContains(t, err, "exit status 23")
 				expected = "delete\n-f\n" + instances[0].Name + "\n"
 			default:
@@ -189,8 +201,8 @@ func TestStopProjectLifecycle(t *testing.T) {
 			command, log := lifecycleFixture(t, nil)
 			if status != "" {
 				payload, err := json.Marshal([]map[string]any{{
-					"name": name, "status": status,
-					"config": map[string]any{"mounts": []map[string]any{{
+					"name": name, limaStatusKey: status,
+					limaConfigKey: map[string]any{limaMountsKey: []map[string]any{{
 						"location": project, "mountPoint": project, "writable": true,
 					}}},
 				}})

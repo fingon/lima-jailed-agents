@@ -9,7 +9,18 @@ import (
 	"gotest.tools/v3/assert"
 )
 
-const limaCreationFixtureDirectory = "testdata/lima-creation"
+const (
+	limaCreationFixtureDirectory = "testdata/lima-creation"
+	limaCPUsKey                  = "cpus"
+	nullValueError               = "must not be null"
+	duplicateLimaKeyError        = "duplicate lima key"
+	defaultTemplateTestName      = "default template"
+	limaMemoryFixtureValue       = "8GiB"
+	fedoraInputFixture           = "fedora/input.yaml"
+	fedoraExpectedFixture        = "fedora/expected.yaml"
+	relativeInputFixture         = "relative-reference/input.yaml"
+	relativeExpectedFixture      = "relative-reference/expected.yaml"
+)
 
 func readLimaCreationFixture(t *testing.T, name string) []byte {
 	t.Helper()
@@ -20,14 +31,14 @@ func readLimaCreationFixture(t *testing.T, name string) []byte {
 
 func TestLimaConfiguration(t *testing.T) {
 	for _, test := range []struct{ name, input, want string }{
-		{"empty", "lima: {}", ""},
+		{emptyTestName, "lima: {}", ""},
 		{"resources", "lima: {cpus: 4, memory: 8GiB, nestedVirtualization: true}", ""},
-		{"null", "lima: null", "must not be null"},
-		{"list", "lima: []", "must be a mapping"},
-		{"duplicate", "lima: {cpus: 2, cpus: 4}", "duplicate lima key"},
-		{"nested duplicate", "lima: {ssh: {localPort: 1, localPort: 2}}", "duplicate lima key"},
+		{jsonNullValue, "lima: null", nullValueError},
+		{limaListArguments, "lima: []", "must be a mapping"},
+		{"duplicate", "lima: {cpus: 2, cpus: 4}", duplicateLimaKeyError},
+		{"nested duplicate", "lima: {ssh: {localPort: 1, localPort: 2}}", duplicateLimaKeyError},
 		{"nonstring key", "lima: {1: value}", "keys must be strings"},
-		{"mounts", "lima: {mounts: []}", "managed by LJA"},
+		{limaMountsKey, "lima: {mounts: []}", "managed by LJA"},
 		{"nested null", "lima: {ssh: {localPort: null}}", "lima values must be"},
 		{"nonfinite", "lima: {cpus: .inf}", "invalid lima value"},
 		{"alias", "lima: {cpus: &cpu 4, other: *cpu}", "aliases"},
@@ -54,10 +65,12 @@ func TestLimaConfigurationMerging(t *testing.T) {
 	base := applyDevelopmentConfig(DefaultDevelopmentConfig(), global, "global")
 	merged := applyDevelopmentConfig(base.clone(), project, "project")
 	assert.DeepEqual(t, merged.Lima, map[string]any{
-		"cpus": 4, "memory": "4GiB", "ssh": map[string]any{"localPort": 60022, "loadDotSSHPubKeys": false}, "dns": []any{},
+		limaCPUsKey: 4, limaMemoryKey: "4GiB", "ssh": map[string]any{"localPort": 60022, "loadDotSSHPubKeys": false}, "dns": []any{},
 	})
-	assert.Equal(t, base.Lima["cpus"], 2)
-	assert.Equal(t, base.Lima["ssh"].(map[string]any)["loadDotSSHPubKeys"], true)
+	assert.Equal(t, base.Lima[limaCPUsKey], 2)
+	ssh, ok := base.Lima["ssh"].(map[string]any)
+	assert.Assert(t, ok)
+	assert.Equal(t, ssh["loadDotSSHPubKeys"], true)
 	encoded, err := yamlConfiguration(merged)
 	assert.NilError(t, err)
 	again, err := yamlConfiguration(merged.clone())
@@ -73,11 +86,11 @@ func TestLimaCreationInput(t *testing.T) {
 		config map[string]any
 		want   string
 	}{
-		{name: "default template", config: map[string]any{}, want: "base: template:default\n"},
+		{name: defaultTemplateTestName, config: map[string]any{}, want: "base: template:default\n"},
 		{name: "native configuration", config: map[string]any{
-			"cpus":   4,
-			"memory": "8GiB",
-			"param":  map[string]any{"value": literal},
+			limaCPUsKey:   4,
+			limaMemoryKey: limaMemoryFixtureValue,
+			"param":       map[string]any{"value": literal},
 		}, want: "base: template:default\ncpus: 4\nmemory: 8GiB\nparam:\n  value: |-\n    $(touch nope); \"quoted\"\n    next\n"},
 		{name: "explicit base", config: map[string]any{"base": ""}, want: "base: \"\"\n"},
 		{name: "explicit images", config: map[string]any{"images": []any{}}, want: "images: []\n"},
@@ -101,12 +114,12 @@ func TestLimaCreationInputPreservesGoldenFixtures(t *testing.T) {
 		project  string
 		expected string
 	}{
-		{name: "default template", project: "default/input.yaml", expected: "default/expected.yaml"},
-		{name: "Fedora template", project: "fedora/input.yaml", expected: "fedora/expected.yaml"},
+		{name: defaultTemplateTestName, project: "default/input.yaml", expected: "default/expected.yaml"},
+		{name: "Fedora template", project: fedoraInputFixture, expected: fedoraExpectedFixture},
 		{name: "empty base", project: "empty-base/input.yaml", expected: "empty-base/expected.yaml"},
 		{name: "empty images", project: "empty-images/input.yaml", expected: "empty-images/expected.yaml"},
 		{name: "custom images", project: "custom-images/input.yaml", expected: "custom-images/expected.yaml"},
-		{name: "relative reference", project: "relative-reference/input.yaml", expected: "relative-reference/expected.yaml"},
+		{name: "relative reference", project: relativeInputFixture, expected: relativeExpectedFixture},
 		{name: "inherited configuration", global: "inherited/global.yaml", project: "inherited/project.yaml", expected: "inherited/expected.yaml"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

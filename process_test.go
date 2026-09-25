@@ -10,11 +10,17 @@ import (
 	"gotest.tools/v3/assert"
 )
 
-func runGuestPathBootstrap(t *testing.T, arguments []string, environment []string) []string {
+const (
+	echoCommand         = "echo"
+	shellExecutablePath = "/bin/sh"
+	pathPrintScript     = `printf '%s\n' "$PATH"`
+)
+
+func runGuestPathBootstrap(t *testing.T, arguments, environment []string) []string {
 	t.Helper()
 	commandArguments := []string{shellCommandFlag, guestPathBootstrapScript, programName}
 	commandArguments = append(commandArguments, arguments...)
-	command := exec.Command("/bin/sh", commandArguments...)
+	command := exec.Command(shellExecutablePath, commandArguments...)
 	command.Env = environment
 	output, err := command.Output()
 	assert.NilError(t, err)
@@ -27,7 +33,7 @@ func runGuestPathBootstrap(t *testing.T, arguments []string, environment []strin
 func TestGuestPathBootstrap(t *testing.T) {
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
-	emptyPath := filepath.Join(root, "empty")
+	emptyPath := filepath.Join(root, emptyTestName)
 	assert.NilError(t, os.MkdirAll(home, 0o755))
 	assert.NilError(t, os.Mkdir(emptyPath, 0o755))
 
@@ -74,7 +80,7 @@ func TestGuestPathBootstrap(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			actual := runGuestPathBootstrap(t, []string{"/bin/sh", shellCommandFlag, `printf '%s\n' "$PATH"`}, test.environment)
+			actual := runGuestPathBootstrap(t, []string{shellExecutablePath, shellCommandFlag, pathPrintScript}, test.environment)
 			assert.DeepEqual(t, actual, test.want)
 		})
 	}
@@ -103,7 +109,7 @@ func TestGuestPathBootstrap(t *testing.T) {
 				"FAKE_GOBIN=" + test.goBin,
 				"FAKE_GOPATH=" + test.goPath,
 			}
-			actual := runGuestPathBootstrap(t, []string{"/bin/sh", shellCommandFlag, `printf '%s\n' "$PATH"`}, environment)
+			actual := runGuestPathBootstrap(t, []string{shellExecutablePath, shellCommandFlag, pathPrintScript}, environment)
 			assert.Equal(t, actual[0], test.want)
 		})
 	}
@@ -115,7 +121,7 @@ func TestGuestPathBootstrapRunsCommandProbe(t *testing.T) {
 	assert.NilError(t, os.WriteFile(executable, []byte("#!/bin/sh\n"), 0o755))
 
 	commandArguments := []string{shellCommandFlag, guestPathBootstrapScript, programName, guestCommandProbe, guestCommandProbeFlag, codexAgentName}
-	command := exec.Command("/bin/sh", commandArguments...)
+	command := exec.Command(shellExecutablePath, commandArguments...)
 	command.Env = []string{"PATH=" + root}
 	output, err := command.Output()
 	assert.NilError(t, err)
@@ -137,7 +143,7 @@ func TestGuestPathBootstrapRunsCommandProbe(t *testing.T) {
 
 func TestGuestArgumentsWithPathPreservesCommandArguments(t *testing.T) {
 	path := "/tmp/lja/lja-test/bin"
-	arguments := guestArgumentsWithPath([]string{"echo", "word with spaces"}, path)
+	arguments := guestArgumentsWithPath([]string{echoCommand, wordWithSpaces}, path)
 	assert.Equal(t, arguments[0], shellCommand)
 	assert.Equal(t, arguments[1], shellCommandFlag)
 	assert.Equal(t, arguments[3], programName)
@@ -145,5 +151,5 @@ func TestGuestArgumentsWithPathPreservesCommandArguments(t *testing.T) {
 	assert.Equal(t, arguments[5], shellCommandFlag)
 	assert.Assert(t, strings.Contains(arguments[6], "PATH='"+path+"':${PATH-}"))
 	assert.Equal(t, arguments[7], programName)
-	assert.DeepEqual(t, arguments[8:], []string{"echo", "word with spaces"})
+	assert.DeepEqual(t, arguments[8:], []string{echoCommand, wordWithSpaces})
 }

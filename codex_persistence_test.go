@@ -127,11 +127,11 @@ func TestCodexTrustPersistenceLeavesFilesUnchangedOnErrors(t *testing.T) {
 		content func(string) string
 		want    string
 	}{
-		{name: "malformed TOML", content: func(string) string { return "projects =\n" }, want: "invalid Codex TOML"},
-		{name: "duplicate definition", content: func(string) string { return "value = 1\nvalue = 2\n" }, want: "invalid Codex TOML"},
+		{name: malformedTOMLTestName, content: func(string) string { return "projects =\n" }, want: invalidCodexTOMLMessage},
+		{name: duplicateDefinitionTestName, content: func(string) string { return "value = 1\nvalue = 2\n" }, want: invalidCodexTOMLMessage},
 		{name: "incompatible trust type", content: func(project string) string {
 			return "[projects." + strconv.Quote(project) + "]\ntrust_level = 1\n"
-		}, want: "must be a string"},
+		}, want: stringTypeError},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

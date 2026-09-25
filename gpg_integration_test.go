@@ -55,7 +55,7 @@ func TestGPGRealAgent(t *testing.T) {
 		_, err = run(guest, gpgConfCommand, nil, "--create-socketdir")
 		assert.NilError(t, err)
 	}
-	_, err = run(guest, gpgCommand, public, "--batch", "--no-autostart", "--import")
+	_, err = run(guest, gpgCommand, public, "--batch", gpgNoAutostartFlag, "--import")
 	assert.NilError(t, err)
 	socket, err = run(host, gpgConfCommand, nil, "--list-dirs", "agent-extra-socket")
 	assert.NilError(t, err)
@@ -65,7 +65,7 @@ func TestGPGRealAgent(t *testing.T) {
 	defer cancelProxy(nil)
 	proxy, err := newGPGProxy(guestSocket, hostSocket, cancelProxy)
 	assert.NilError(t, err)
-	defer proxy.close()
+	defer func() { assert.NilError(t, proxy.close()) }()
 	message := []byte("LJA GPG forwarding integration test\n")
 	signature, err := run(guest, gpgCommand, message, "--batch", "--local-user", identity, "--detach-sign")
 	assert.NilError(t, err)

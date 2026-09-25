@@ -11,6 +11,12 @@ import (
 	"gotest.tools/v3/assert"
 )
 
+const (
+	successTestName               = "success"
+	githubURLRewriteConflictError = "conflicting GitHub URL rewrite"
+	githubExampleHTTPSRemote      = "https://github.com/owner/repo"
+)
+
 func TestHostGitConfigDiagnostics(t *testing.T) {
 	const (
 		configPath          = "/example/.gitconfig"
@@ -28,9 +34,9 @@ func TestHostGitConfigDiagnostics(t *testing.T) {
 	}{
 		{name: "diagnostic", stderr: "  " + diagnostic + "\n", exitCode: failureExitCode, wantError: failureMessage + ": " + diagnostic},
 		{name: "multiline", stderr: multilineDiagnostic + "\n", exitCode: failureExitCode, wantError: failureMessage + ": " + multilineDiagnostic},
-		{name: "empty", exitCode: failureExitCode, wantError: failureMessage},
+		{name: emptyTestName, exitCode: failureExitCode, wantError: failureMessage},
 		{name: "whitespace", stderr: " \t\n", exitCode: failureExitCode, wantError: failureMessage},
-		{name: "success", stderr: diagnostic, exitCode: "0"},
+		{name: successTestName, stderr: diagnostic, exitCode: "0"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			bin := t.TempDir()
@@ -59,13 +65,13 @@ func TestGitHubGitEnvironment(t *testing.T) {
 		environment map[string]string
 		wantError   string
 	}{
-		{name: "no existing entries", environment: map[string]string{"BUILD_MODE": "test"}},
-		{name: "missing count", environment: map[string]string{gitConfigKeyEnvPrefix + "0": "user.name"}, wantError: "GIT_CONFIG_COUNT"},
+		{name: "no existing entries", environment: map[string]string{buildModeEnvironment: testEnvironmentValue}},
+		{name: "missing count", environment: map[string]string{gitConfigKeyEnvPrefix + "0": gitUserNameKey}, wantError: gitConfigCountEnv},
 		{name: "invalid count", environment: map[string]string{gitConfigCountEnv: "nope"}, wantError: "GIT_CONFIG_COUNT"},
-		{name: "missing value", environment: map[string]string{gitConfigCountEnv: "1", gitConfigKeyEnvPrefix + "0": "user.name"}, wantError: "entry 0"},
-		{name: "outside count", environment: map[string]string{gitConfigCountEnv: "0", gitConfigKeyEnvPrefix + "0": "user.name", gitConfigValueEnvPrefix + "0": "Example"}, wantError: "outside"},
-		{name: "invalid key", environment: map[string]string{gitConfigCountEnv: "1", gitConfigKeyEnvPrefix + "0": "", gitConfigValueEnvPrefix + "0": "Example"}, wantError: "invalid"},
-		{name: "NUL value", environment: map[string]string{gitConfigCountEnv: "1", gitConfigKeyEnvPrefix + "0": "user.name", gitConfigValueEnvPrefix + "0": "bad\x00value"}, wantError: "NUL"},
+		{name: "missing value", environment: map[string]string{gitConfigCountEnv: "1", gitConfigKeyEnvPrefix + "0": gitUserNameKey}, wantError: "entry 0"},
+		{name: "outside count", environment: map[string]string{gitConfigCountEnv: "0", gitConfigKeyEnvPrefix + "0": gitUserNameKey, gitConfigValueEnvPrefix + "0": exampleUserName}, wantError: "outside"},
+		{name: "invalid key", environment: map[string]string{gitConfigCountEnv: "1", gitConfigKeyEnvPrefix + "0": "", gitConfigValueEnvPrefix + "0": exampleUserName}, wantError: invalidTestError},
+		{name: "NUL value", environment: map[string]string{gitConfigCountEnv: "1", gitConfigKeyEnvPrefix + "0": gitUserNameKey, gitConfigValueEnvPrefix + "0": "bad\x00value"}, wantError: "NUL"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			result, err := githubGitEnvironment(test.environment)
@@ -74,7 +80,7 @@ func TestGitHubGitEnvironment(t *testing.T) {
 				return
 			}
 			assert.NilError(t, err)
-			assert.Equal(t, result["BUILD_MODE"], "test")
+			assert.Equal(t, result[buildModeEnvironment], testEnvironmentValue)
 			assert.Equal(t, result[gitConfigCountEnv], "4")
 			assert.Equal(t, result[gitConfigKeyEnvPrefix+"0"], githubCredentialKey)
 			assert.Equal(t, result[gitConfigValueEnvPrefix+"0"], "")
@@ -85,16 +91,16 @@ func TestGitHubGitEnvironment(t *testing.T) {
 	}
 
 	existing := map[string]string{
-		"BUILD_MODE":                  "test",
+		buildModeEnvironment:          testEnvironmentValue,
 		gitConfigCountEnv:             "1",
-		gitConfigKeyEnvPrefix + "0":   "user.name",
-		gitConfigValueEnvPrefix + "0": "Example",
+		gitConfigKeyEnvPrefix + "0":   gitUserNameKey,
+		gitConfigValueEnvPrefix + "0": exampleUserName,
 	}
 	result, err := githubGitEnvironment(existing)
 	assert.NilError(t, err)
 	assert.Equal(t, result[gitConfigCountEnv], "5")
-	assert.Equal(t, result[gitConfigKeyEnvPrefix+"0"], "user.name")
-	assert.Equal(t, result[gitConfigValueEnvPrefix+"0"], "Example")
+	assert.Equal(t, result[gitConfigKeyEnvPrefix+"0"], gitUserNameKey)
+	assert.Equal(t, result[gitConfigValueEnvPrefix+"0"], exampleUserName)
 	assert.Equal(t, existing[gitConfigCountEnv], "1")
 }
 
@@ -115,12 +121,12 @@ func TestGitHubGitConfigRewriteConflicts(t *testing.T) {
 		{
 			name:      "GitHub SSH rewrite",
 			content:   "[url \"ssh://git@github.com/\"]\n\tinsteadOf = git@github.com:\n",
-			wantError: "conflicting GitHub URL rewrite",
+			wantError: githubURLRewriteConflictError,
 		},
 		{
 			name:      "GitHub push rewrite",
 			content:   "[url \"ssh://git@github.com/\"]\n\tpushInsteadOf = ssh://git@github.com/\n",
-			wantError: "conflicting GitHub URL rewrite",
+			wantError: githubURLRewriteConflictError,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -170,8 +176,8 @@ func TestGitHubGitRewritesFetchPushAndLeavesOtherHosts(t *testing.T) {
 		remote    string
 		rewritten string
 	}{
-		{name: "scp SSH", remote: "git@github.com:owner/repo", rewritten: "https://github.com/owner/repo"},
-		{name: "URL SSH", remote: "ssh://git@github.com/owner/repo", rewritten: "https://github.com/owner/repo"},
+		{name: "scp SSH", remote: "git@github.com:owner/repo", rewritten: githubExampleHTTPSRemote},
+		{name: "URL SSH", remote: "ssh://git@github.com/owner/repo", rewritten: githubExampleHTTPSRemote},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			assert.NilError(t, exec.Command(gitCommand, "-C", repository, "remote", "set-url", "origin", test.remote).Run())

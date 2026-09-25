@@ -21,6 +21,7 @@ const (
 	codexTrustedValue       = "trusted"
 	codexUntrustedValue     = "untrusted"
 	codexTrustedTOMLValue   = `"trusted"`
+	invalidCodexTOMLMessage = "invalid Codex TOML"
 )
 
 func canonicalCodexDirectories(directories []string) ([]string, error) {
@@ -48,12 +49,12 @@ func codexTrustPath(directory string) []string {
 	return []string{codexProjectsKey, directory, codexTrustKey}
 }
 
-func codexIsTable(value interface{}) bool {
-	_, ok := value.(map[string]interface{})
+func codexIsTable(value any) bool {
+	_, ok := value.(map[string]any)
 	return ok
 }
 
-func codexTrustValue(value interface{}, directory string) (string, error) {
+func codexTrustValue(value any, directory string) (string, error) {
 	trust, ok := value.(string)
 	if !ok {
 		return "", ljaError("Codex trust setting for %s must be a string", directory)
@@ -120,7 +121,7 @@ func codexTrustedConfig(content string, directories []string) (string, error) {
 	}
 	document, err := tomledit.Parse([]byte(content))
 	if err != nil {
-		return "", ljaError("invalid Codex TOML: %w", err)
+		return "", ljaError(invalidCodexTOMLMessage+": %w", err)
 	}
 	changed := false
 	for _, directory := range canonicalDirectories {
@@ -158,7 +159,11 @@ func ensureCodexDirectoryTrust(stateRoot string, directories []string, lockDirec
 	}
 	digest := sha256.Sum256([]byte(canonicalState))
 	lockName := "codex-config-" + hex.EncodeToString(digest[:])
-	lockErr := withAdvisoryLock(canonicalState, lockName, "", lockDirectory, func(string) error {
+	lockErr := withAdvisoryLock(AdvisoryLockOptions{
+		Project:       canonicalState,
+		VMName:        lockName,
+		LockDirectory: lockDirectory,
+	}, func(string) error {
 		if _, err := EnsureAgentStateDirectories(canonicalState, codexAgentName); err != nil {
 			return err
 		}
@@ -206,21 +211,18 @@ func ensureCodexDirectoryTrust(stateRoot string, directories []string, lockDirec
 		if chmodErr := temporary.Chmod(mode); chmodErr != nil {
 			closeErr := temporary.Close()
 			if closeErr != nil {
-				return fmt.Errorf("%w; closing temporary config: %v", chmodErr, closeErr)
+				return fmt.Errorf("%w; closing temporary config: %w", chmodErr, closeErr)
 			}
 			return chmodErr
 		}
-		writeErr := error(nil)
-		_, writeCountErr := temporary.WriteString(updated)
-		if writeCountErr != nil {
-			writeErr = writeCountErr
-		} else {
+		_, writeErr := temporary.WriteString(updated)
+		if writeErr == nil {
 			writeErr = temporary.Sync()
 		}
 		closeErr := temporary.Close()
 		if writeErr != nil || closeErr != nil {
 			if writeErr != nil && closeErr != nil {
-				return fmt.Errorf("%w; closing temporary config: %v", writeErr, closeErr)
+				return fmt.Errorf("%w; closing temporary config: %w", writeErr, closeErr)
 			}
 			if writeErr != nil {
 				return writeErr

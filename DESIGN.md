@@ -776,8 +776,8 @@ Codex editing, instruction replacement, Git path rewriting, wrappers, and
 failure handling. A fake `limactl` command can be supplied through
 `WorkflowOptions.LimaCommand` for process-boundary and lifecycle tests.
 
-`make check` runs `prek run --all-files`, `go test ./...`, and `go build ./...`.
-The repository hook formats Go files and runs `go vet ./...`.
+`make check` runs `go tool golangci-lint run`, `go test ./...`, and `go build ./...`.
+The repository hook runs `golangci-lint --fix` on Go files.
 
 Routine tests do not boot Lima or use agent accounts. GPG tests use fake Lima
 and SSH processes with live Unix sockets, including active-connection

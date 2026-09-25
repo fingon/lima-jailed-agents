@@ -13,10 +13,27 @@ import (
 )
 
 const (
-	codexEditFixtureDirectory = "testdata/codex-edit"
-	codexEditPathPlaceholder  = "{{PROJECT_KEY}}"
-	codexEditInsertedKey      = "{{EDIT_PROJECT_KEY}}"
-	codexEditTrustedTOMLValue = `"trusted"`
+	codexEditFixtureDirectory       = "testdata/codex-edit"
+	codexEditPathPlaceholder        = "{{PROJECT_KEY}}"
+	codexEditInsertedKey            = "{{EDIT_PROJECT_KEY}}"
+	codexEditTrustedTOMLValue       = `"trusted"`
+	codexDotsProjectKey             = "dots"
+	codexQuotesProjectKey           = "quotes"
+	codexBackslashProjectKey        = "backslash"
+	codexUnicodeProjectKey          = "unicode"
+	codexOrdinaryInputFixture       = "ordinary-replace/input.toml"
+	codexOrdinaryExpectedFixture    = "ordinary-replace/expected.toml"
+	codexTableInputFixture          = "table-insert/input.toml"
+	codexTableExpectedFixture       = "table-insert/expected.toml"
+	codexDottedInputFixture         = "dotted-insert/input.toml"
+	codexDottedExpectedFixture      = "dotted-insert/expected.toml"
+	codexInlineInputFixture         = "inline-insert/input.toml"
+	codexInlineExpectedFixture      = "inline-insert/expected.toml"
+	malformedTOMLTestName           = "malformed TOML"
+	duplicateDefinitionTestName     = "duplicate definition"
+	scalarProjectsTOML              = "projects = \"scalar\"\n"
+	codexMalformedValue             = "trust_level =\n"
+	codexDuplicateDefinitionContent = "trust_level = \"untrusted\"\ntrust_level = \"trusted\"\n"
 )
 
 func readCodexEditFixture(t *testing.T, name string) string {
@@ -26,7 +43,7 @@ func readCodexEditFixture(t *testing.T, name string) string {
 	return string(content)
 }
 
-func materializeCodexEditFixture(t *testing.T, name string, project string) string {
+func materializeCodexEditFixture(t *testing.T, name, project string) string {
 	t.Helper()
 	content := strings.ReplaceAll(readCodexEditFixture(t, name), codexEditPathPlaceholder, strconv.Quote(project))
 	return strings.ReplaceAll(content, codexEditInsertedKey, "'"+project+"'")
@@ -35,10 +52,10 @@ func materializeCodexEditFixture(t *testing.T, name string, project string) stri
 func TestCodexEditPreservesGoldenFixtures(t *testing.T) {
 	root := t.TempDir()
 	projects := map[string]string{
-		"dots":      filepath.Join(root, "project.with.dots"),
-		"quotes":    filepath.Join(root, "quote\"dir"),
-		"backslash": filepath.Join(root, "back\\slash"),
-		"unicode":   filepath.Join(root, "ユニコード"),
+		codexDotsProjectKey:      filepath.Join(root, "project.with.dots"),
+		codexQuotesProjectKey:    filepath.Join(root, "quote\"dir"),
+		codexBackslashProjectKey: filepath.Join(root, "back\\slash"),
+		codexUnicodeProjectKey:   filepath.Join(root, "ユニコード"),
 	}
 	for _, project := range projects {
 		assert.NilError(t, os.Mkdir(project, 0o755))
@@ -53,28 +70,28 @@ func TestCodexEditPreservesGoldenFixtures(t *testing.T) {
 	}{
 		{
 			name:       "ordinary table replacement with dotted directory",
-			project:    projects["dots"],
-			input:      "ordinary-replace/input.toml",
-			expected:   "ordinary-replace/expected.toml",
+			project:    projects[codexDotsProjectKey],
+			input:      codexOrdinaryInputFixture,
+			expected:   codexOrdinaryExpectedFixture,
 			pathExists: true,
 		},
 		{
 			name:     "ordinary table insertion with quoted directory",
-			project:  projects["quotes"],
-			input:    "table-insert/input.toml",
-			expected: "table-insert/expected.toml",
+			project:  projects[codexQuotesProjectKey],
+			input:    codexTableInputFixture,
+			expected: codexTableExpectedFixture,
 		},
 		{
 			name:     "dotted key insertion with backslash directory",
-			project:  projects["backslash"],
-			input:    "dotted-insert/input.toml",
-			expected: "dotted-insert/expected.toml",
+			project:  projects[codexBackslashProjectKey],
+			input:    codexDottedInputFixture,
+			expected: codexDottedExpectedFixture,
 		},
 		{
 			name:     "inline table insertion with Unicode directory",
-			project:  projects["unicode"],
-			input:    "inline-insert/input.toml",
-			expected: "inline-insert/expected.toml",
+			project:  projects[codexUnicodeProjectKey],
+			input:    codexInlineInputFixture,
+			expected: codexInlineExpectedFixture,
 		},
 	}
 	for _, test := range tests {
@@ -106,10 +123,10 @@ func TestCodexEditPreservesGoldenFixtures(t *testing.T) {
 func TestCodexTrustedConfigPreservesGoldenFixtures(t *testing.T) {
 	root := t.TempDir()
 	projects := map[string]string{
-		"dots":      filepath.Join(root, "project.with.dots"),
-		"quotes":    filepath.Join(root, "quote\"dir"),
-		"backslash": filepath.Join(root, "back\\slash"),
-		"unicode":   filepath.Join(root, "ユニコード"),
+		codexDotsProjectKey:      filepath.Join(root, "project.with.dots"),
+		codexQuotesProjectKey:    filepath.Join(root, "quote\"dir"),
+		codexBackslashProjectKey: filepath.Join(root, "back\\slash"),
+		codexUnicodeProjectKey:   filepath.Join(root, "ユニコード"),
 	}
 	for _, project := range projects {
 		assert.NilError(t, os.Mkdir(project, 0o755))
@@ -122,31 +139,31 @@ func TestCodexTrustedConfigPreservesGoldenFixtures(t *testing.T) {
 	}{
 		{
 			name:     "replace ordinary trust setting",
-			project:  projects["dots"],
-			input:    "ordinary-replace/input.toml",
-			expected: "ordinary-replace/expected.toml",
+			project:  projects[codexDotsProjectKey],
+			input:    codexOrdinaryInputFixture,
+			expected: codexOrdinaryExpectedFixture,
 		},
 		{
 			name:     "insert trust into ordinary table",
-			project:  projects["quotes"],
-			input:    "table-insert/input.toml",
-			expected: "table-insert/expected.toml",
+			project:  projects[codexQuotesProjectKey],
+			input:    codexTableInputFixture,
+			expected: codexTableExpectedFixture,
 		},
 		{
 			name:     "insert trust into dotted project",
-			project:  projects["backslash"],
-			input:    "dotted-insert/input.toml",
-			expected: "dotted-insert/expected.toml",
+			project:  projects[codexBackslashProjectKey],
+			input:    codexDottedInputFixture,
+			expected: codexDottedExpectedFixture,
 		},
 		{
 			name:     "insert trust into inline project",
-			project:  projects["unicode"],
-			input:    "inline-insert/input.toml",
-			expected: "inline-insert/expected.toml",
+			project:  projects[codexUnicodeProjectKey],
+			input:    codexInlineInputFixture,
+			expected: codexInlineExpectedFixture,
 		},
 		{
 			name:     "create missing project",
-			project:  projects["dots"],
+			project:  projects[codexDotsProjectKey],
 			input:    "create-project/input.toml",
 			expected: "create-project/expected.toml",
 		},
@@ -221,11 +238,11 @@ func TestCodexTrustedConfigRejectsInvalidDocumentsAndTypes(t *testing.T) {
 		content string
 		want    string
 	}{
-		{name: "malformed TOML", content: "trust_level =\n", want: "invalid Codex TOML"},
-		{name: "duplicate definition", content: "trust_level = \"untrusted\"\ntrust_level = \"trusted\"\n", want: "invalid Codex TOML"},
-		{name: "projects scalar", content: "projects = \"scalar\"\n", want: "Codex projects must be a table"},
+		{name: malformedTOMLTestName, content: codexMalformedValue, want: invalidCodexTOMLMessage},
+		{name: duplicateDefinitionTestName, content: codexDuplicateDefinitionContent, want: invalidCodexTOMLMessage},
+		{name: "projects scalar", content: scalarProjectsTOML, want: "Codex projects must be a table"},
 		{name: "project scalar", content: "projects = { " + quotedProject + " = \"scalar\" }\n", want: "must be a table"},
-		{name: "trust scalar", content: "[projects." + quotedProject + "]\ntrust_level = 1\n", want: "must be a string"},
+		{name: "trust scalar", content: "[projects." + quotedProject + "]\ntrust_level = 1\n", want: stringTypeError},
 		{name: "unexpected trust value", content: "[projects." + quotedProject + "]\ntrust_level = \"maybe\"\n", want: "unsupported Codex trust value"},
 	}
 	for _, test := range tests {
@@ -240,8 +257,8 @@ func TestCodexEditPreservesCRLFAndMissingFinalNewline(t *testing.T) {
 	root := t.TempDir()
 	project := filepath.Join(root, "project.with.dots")
 	assert.NilError(t, os.Mkdir(project, 0o755))
-	input := materializeCodexEditFixture(t, "ordinary-replace/input.toml", project)
-	expected := materializeCodexEditFixture(t, "ordinary-replace/expected.toml", project)
+	input := materializeCodexEditFixture(t, codexOrdinaryInputFixture, project)
+	expected := materializeCodexEditFixture(t, codexOrdinaryExpectedFixture, project)
 	input = strings.TrimSuffix(input, "\n")
 	expected = strings.TrimSuffix(expected, "\n")
 	input = strings.ReplaceAll(input, "\n", "\r\n")
@@ -257,8 +274,8 @@ func TestCodexEditRejectsInvalidDocuments(t *testing.T) {
 		name    string
 		content string
 	}{
-		{name: "malformed value", content: "trust_level =\n"},
-		{name: "duplicate key", content: "trust_level = \"untrusted\"\ntrust_level = \"trusted\"\n"},
+		{name: "malformed value", content: codexMalformedValue},
+		{name: "duplicate key", content: codexDuplicateDefinitionContent},
 		{name: "redefined table", content: "[projects]\n[projects]\n"},
 	}
 	for _, test := range tests {

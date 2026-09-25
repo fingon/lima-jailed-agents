@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/fingon/lima-jailed-agents"
+	lja "github.com/fingon/lima-jailed-agents"
 )
 
 func main() {
