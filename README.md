@@ -190,6 +190,7 @@ lima:
   cpus: 4
   memory: "8GiB"
 packages: [git, make, ninja-build]
+tools: [prek]
 agents: [codex, claude]
 copy_git_config: true
 env:
@@ -227,6 +228,7 @@ lima: {}
 packages:
   - git
   - make
+tools: []
 agents: []
 copy_git_config: true
 env: {}
@@ -234,11 +236,13 @@ env_passthrough: []
 setup: []
 ```
 
-`packages` and `agents` replace the inherited lists and are deduplicated. The
+`packages`, `tools`, and `agents` replace the inherited lists and are
+deduplicated. Logical tools currently support `uv` and `prek`; selecting
+`prek` automatically prepares the native `pipx` prerequisite and `uv` before
+installing `prek`. An explicit empty list clears inherited selections. The
 project `agents` list therefore controls which agents are installed by
-default; an explicit empty list clears global defaults. `env` is merged by
-name, with the project taking precedence. Setup commands and passthrough names
-append to the global values unless a project sets `inherit_setup` or
+default. `env` is merged by name, with the project taking precedence. Setup
+commands and passthrough names append to the global values unless a project sets `inherit_setup` or
 `inherit_env_passthrough` to `false`. Commands run from the project root in
 separate `sh -eu -c` guest processes and may use guest `sudo`. They run for
 `shell`, agent launches, `update`, and VM creation; they must be idempotent.

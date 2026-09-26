@@ -28,6 +28,7 @@ small executable entry point in `cmd/lja`.
 | `gpg.go` | Invocation-scoped GPG agent forwarding and revocation |
 | `codex.go` | Conservative Codex TOML trust editing |
 | `agent.go` | Package provisioning, wrappers, invocation, and launch |
+| `tools.go` | Logical tool definitions, dependency resolution, and provisioning |
 | `discovery.go` | Project discovery, status, and stop |
 | `cli.go` | Kong command parsing and dispatch |
 | `cmd/lja` | Process entry point |
@@ -263,6 +264,7 @@ lima: {}
 packages:
   - git
   - make
+tools: []
 agents: []
 copy_git_config: true
 env: {}
@@ -334,25 +336,23 @@ settings. It will not resolve passthrough values or include setup provenance.
 Configuration loading never rewrites source files, and the exported project
 filename constant is `.lja.yaml`.
 
-### Logical tools (planned)
+### Logical tools
 
-This setting is not implemented yet. The implementation work is tracked in
-[TODO.md](TODO.md#logical-tools).
-
-A new `tools` sequence of logical tool names will sit alongside `packages`,
-defaulting to `[]`. Global and project lists will follow package-list semantics:
-a project list replaces the inherited list, duplicates are removed in stable
-order, and an explicit empty list clears inherited selections. Initially the
-supported names will be `uv` and `prek`; unknown names will be configuration
-errors. Each name selects built-in installation and dependency logic rather
-than a native package name or a user-supplied installation command.
+The `tools` sequence selects built-in logical tool definitions independently of
+the native `packages` list. It defaults to `[]`. Global and project lists follow
+package-list semantics: a project list replaces the inherited list, duplicates
+are removed in stable order, and an explicit empty list clears inherited
+selections. The supported names are `uv` and `prek`; unknown names are
+configuration errors. `DevelopmentConfig.Tools` exposes the requested list to
+package callers, and `lja config` reports that effective list rather than its
+expanded dependencies.
 
 | Tool | Prerequisite | Installation as the guest user |
 | --- | --- | --- |
 | `uv` | Native `pipx` dependency | `pipx install uv` |
 | `prek` | Logical tool `uv` | `uv tool install prek` |
 
-For example, this planned configuration requests the complete
+For example, this configuration requests the complete
 `pipx → uv → prek` dependency chain:
 
 ```yaml
@@ -360,8 +360,8 @@ tools:
   - prek
 ```
 
-LJA will resolve transitive prerequisites, deduplicate shared dependencies,
-and prepare them in dependency order, regardless of configured list order.
+LJA resolves transitive prerequisites, deduplicates shared dependencies, and
+prepares them in dependency order, regardless of configured list order.
 Native prerequisites will use the existing guest package backend, including
 when `packages: []` is configured. `pipx` is an automatic native prerequisite,
 not an additional selectable logical tool in the initial release.
@@ -444,9 +444,9 @@ stable deduplicated order.
 ## Fedora guests and native dependencies
 
 This section records the native Lima creation and guest preparation design.
-Remaining test and live-validation work is tracked in
-[TODO.md](TODO.md#fedora-guests-and-native-dependencies). No additional distro,
-package-manager, or Node-provider settings are planned.
+Table-driven fake-guest tests cover both native backends, and the optional
+logical-tool live smoke test can validate default and Fedora templates. No
+additional distro, package-manager, or Node-provider settings are planned.
 
 ### Template selection
 
@@ -829,6 +829,7 @@ Routine tests do not boot Lima or use agent accounts. GPG tests use fake Lima
 and SSH processes with live Unix sockets, including active-connection
 revocation after SIGTERM and SIGKILL. `make test-gpg` additionally generates a
 disposable local keyring to verify signing, decryption, public-only transfer,
-and revocation against a real GnuPG agent; it never uses the caller's keyring. Real-Lima validation is
-still needed for agent database persistence and concurrent shared-state use;
-the concrete checklist is in [TODO.md](TODO.md).
+and revocation against a real GnuPG agent; it never uses the caller's keyring.
+`tools_live_test.go` provides an opt-in disposable Lima smoke test for the
+logical-tool chain; set `LJA_TEST_REAL_LIMA=1` to run the default and Fedora
+templates, or set `LJA_TEST_REAL_LIMA_TEMPLATES` to choose templates.
