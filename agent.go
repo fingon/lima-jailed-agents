@@ -231,7 +231,7 @@ func effectiveAgentNames(selectedAgent string, withAgents []string, config *Deve
 	return normalizeAgentNames(selectedAgent, additional)
 }
 
-func effectiveDevelopmentPackages(config DevelopmentConfig) []string {
+func effectiveDevelopmentPackages(config DevelopmentConfig) ([]string, error) {
 	return (guestPackageBackend{gitPackage: gitCommand, ghPackage: ghCommand, gpgPackage: gpgPackage}).developmentPackageNames(config)
 }
 

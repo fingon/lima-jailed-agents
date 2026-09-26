@@ -7,7 +7,7 @@
   deterministic configuration output. Default to an empty list; match package
   replacement, stable deduplication, and explicit-empty inheritance behavior.
   Initially accept only `uv` and `prek`.
-- [ ] Add built-in tool definitions and transitive dependency resolution:
+- [x] Add built-in tool definitions and transitive dependency resolution:
   native `pipx` → `uv` via `pipx install uv` → `prek` via
   `uv tool install prek`. Deduplicate prerequisites and install in dependency
   order, using the guest package backend for native dependencies even with an

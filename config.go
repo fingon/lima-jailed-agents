@@ -477,8 +477,8 @@ func decodeDevelopmentConfig(content []byte, isProject bool) (sourceDevelopmentC
 			return sourceDevelopmentConfig{}, err
 		}
 		for index, toolName := range tools {
-			if toolName != logicalToolUV && toolName != logicalToolPrek {
-				return sourceDevelopmentConfig{}, configNodeError(node.Content[index], "invalid tool: %s; expected one of %s, %s", toolName, logicalToolUV, logicalToolPrek)
+			if _, toolErr := logicalToolDefinitionByName(toolName); toolErr != nil {
+				return sourceDevelopmentConfig{}, configNodeError(node.Content[index], "invalid tool: %v", toolErr)
 			}
 		}
 		decoded.Tools, decoded.HasTools = tools, true

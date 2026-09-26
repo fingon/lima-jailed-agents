@@ -44,6 +44,7 @@ const (
 	scalarCoercionTestName            = "scalar coercion"
 	arrayScalarCoercionTestName       = "array scalar coercion"
 	unknownAgentTestName              = "unknown agent"
+	unknownLogicalToolName            = "unknown"
 	multipleDocumentsTestName         = "multiple documents"
 	opencodePromptValue               = "prompt"
 	shellInjectionArgument            = "$(touch nope);"
@@ -694,7 +695,7 @@ func TestConfiguredAgentNames(t *testing.T) {
 	assert.NilError(t, err)
 	assert.DeepEqual(t, effective, []string{codexAgentName, claudeAgentName, openCodeAgentName})
 
-	_, err = configuredAgentNames(&DevelopmentConfig{Agents: []string{"unknown"}})
+	_, err = configuredAgentNames(&DevelopmentConfig{Agents: []string{unknownLogicalToolName}})
 	assert.ErrorContains(t, err, unknownAgentTestName)
 }
 

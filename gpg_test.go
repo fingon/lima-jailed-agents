@@ -66,7 +66,9 @@ func TestGPGConfiguration(t *testing.T) {
 			assert.Equal(t, config.GPGForwarding, test.want)
 			assert.Equal(t, config.clone().GPGForwarding, test.want)
 			assert.Equal(t, config.AsYAML().GPGForwarding, test.want)
-			assert.Equal(t, slices.Contains(effectiveDevelopmentPackages(config), gpgPackage), test.want)
+			packages, err := effectiveDevelopmentPackages(config)
+			assert.NilError(t, err)
+			assert.Equal(t, slices.Contains(packages, gpgPackage), test.want)
 		})
 	}
 	for _, content := range []string{"gpg_forwarding: null", "gpg_forwarding: 'true'", "gpg_forwarding: 1", "gpg_forwarding: []", "gpg_forwarding: true\ngpg_forwarding: false"} {

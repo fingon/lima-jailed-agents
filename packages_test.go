@@ -106,11 +106,13 @@ func TestPackageBackendSelection(t *testing.T) {
 			assert.Equal(t, backend.name, test.wantName)
 			assert.Equal(t, backend.gpgPackage, test.wantGPG)
 			assert.DeepEqual(t, backend.nodePackageNames(), test.wantNode)
-			assert.DeepEqual(t, backend.developmentPackageNames(DevelopmentConfig{
+			development, err := backend.developmentPackageNames(DevelopmentConfig{
 				Packages:      []string{makeCommand, gitCommand, makeCommand},
 				GPGForwarding: true,
 				CopyGitConfig: true,
-			}), test.wantDevelopment)
+			})
+			assert.NilError(t, err)
+			assert.DeepEqual(t, development, test.wantDevelopment)
 			assert.DeepEqual(t, backend.queryArguments("make"), test.wantQuery)
 			assert.DeepEqual(t, backend.installArguments([]string{makeCommand, gccPackageName}), test.wantInstall)
 			assert.Equal(t, len(backend.requiredTools), test.wantToolCount)
@@ -150,10 +152,12 @@ func TestGitHubDevelopmentDependencies(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			backend, err := packageBackendForOSRelease(guestOSRelease{ID: ubuntuOSID})
 			assert.NilError(t, err)
-			assert.DeepEqual(t, backend.developmentPackageNames(DevelopmentConfig{
+			development, err := backend.developmentPackageNames(DevelopmentConfig{
 				GitHub:        GitHubConfig{Enabled: true},
 				CopyGitConfig: test.copyGitConfig,
-			}), test.wantDevelopment)
+			})
+			assert.NilError(t, err)
+			assert.DeepEqual(t, development, test.wantDevelopment)
 		})
 	}
 }

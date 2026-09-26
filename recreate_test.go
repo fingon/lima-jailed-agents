@@ -33,6 +33,7 @@ const (
 	packageInstallStage          = "package-install"
 	nodeRuntimeFailureMode       = "failing"
 	nodeRuntimeFailureMessage    = "node runtime failed"
+	logicalToolVersionOutput     = "v1.0.0"
 	configuredPackagesTestName   = "configured packages"
 	implicitGitTestName          = "implicit Git"
 	multiplePackageInstallScript = "sudo apt-get update && sudo apt-get install -y 'make' 'ninja-build'"
@@ -60,6 +61,7 @@ type vmDatabase struct {
 	CreateWorkingDirectories []string
 	Failed                   int
 	PackageInstallationDone  bool
+	LogicalTools             map[string]bool
 }
 
 type vmProcessExitError struct {
@@ -112,6 +114,9 @@ func runVMProcess() error {
 	database, err := readVMDatabase()
 	if err != nil {
 		return err
+	}
+	if database.LogicalTools == nil {
+		database.LogicalTools = make(map[string]bool)
 	}
 	var arguments []string
 	for index, argument := range os.Args {
@@ -260,6 +265,12 @@ func runVMProcess() error {
 	case deleteCommandName:
 		delete(database.VMs, name)
 	case limaShellOperation:
+		if len(guestArguments) == 3 && guestArguments[0] == pipxCommand && guestArguments[1] == installCommand && guestArguments[2] == logicalToolUV {
+			database.LogicalTools[logicalToolUV] = true
+		}
+		if len(guestArguments) == 4 && guestArguments[0] == logicalToolUV && guestArguments[1] == toolSubcommand && guestArguments[2] == installCommand && guestArguments[3] == logicalToolPrek {
+			database.LogicalTools[logicalToolPrek] = true
+		}
 		if len(guestArguments) >= 3 && guestArguments[0] == sudoCommand && guestArguments[1] == npmCommand && guestArguments[2] == installCommand && os.Getenv(vmAgentInstallFailureEnv) == "1" {
 			if _, err := fmt.Fprintln(os.Stderr, "npm ERR! code EBADENGINE"); err != nil {
 				return vmProcessExitError{code: 24, message: err.Error()}
@@ -282,6 +293,11 @@ func runVMProcess() error {
 				return err
 			}
 		}
+		if len(guestArguments) == 2 && guestArguments[1] == versionFlag && (guestArguments[0] == pipxCommand || guestArguments[0] == logicalToolUV || guestArguments[0] == logicalToolPrek) {
+			if _, err := fmt.Fprintln(os.Stdout, logicalToolVersionOutput); err != nil {
+				return err
+			}
+		}
 		if len(guestArguments) > 0 && guestArguments[0] == dpkgQueryCommand && database.PackageInstallationDone {
 			if _, err := fmt.Fprint(os.Stdout, packageInstalledStatus); err != nil {
 				return err
@@ -293,6 +309,12 @@ func runVMProcess() error {
 		if len(arguments) >= 3 && arguments[len(arguments)-3] == guestCommandProbe {
 			if _, err := fmt.Fprintln(os.Stdout, "/usr/bin/"+name); err != nil {
 				return err
+			}
+			if (name == pipxCommand && !database.PackageInstallationDone) || (name == logicalToolUV && !database.LogicalTools[logicalToolUV]) || (name == logicalToolPrek && !database.LogicalTools[logicalToolPrek]) {
+				if err := database.save(); err != nil {
+					return err
+				}
+				return vmProcessExitError{code: 1, message: "logical tool is not installed"}
 			}
 		}
 		if stage == configSetup {
@@ -339,7 +361,7 @@ func vmFixture(t *testing.T, status string) (string, string, WorkflowOptions) {
 	t.Setenv(vmBinaryEnv, binary)
 	t.Setenv(vmDatabaseEnv, filepath.Join(root, "vms.json"))
 	t.Setenv(vmFailureEnv, "")
-	database := vmDatabase{VMs: map[string]testVM{}}
+	database := vmDatabase{VMs: map[string]testVM{}, LogicalTools: map[string]bool{}}
 	if status != "" {
 		database.VMs[name] = testVM{Name: name, Status: status, ID: testOriginalID, Config: map[string]any{
 			limaMountsKey: []testMount{{Location: project, MountPoint: project, Writable: true}},
@@ -367,10 +389,12 @@ func TestEffectiveDevelopmentPackages(t *testing.T) {
 		{name: "empty without Git copy", copyGitConfig: false, want: []string{}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			assert.DeepEqual(t, effectiveDevelopmentPackages(DevelopmentConfig{
+			packages, err := effectiveDevelopmentPackages(DevelopmentConfig{
 				Packages:      test.packages,
 				CopyGitConfig: test.copyGitConfig,
-			}), test.want)
+			})
+			assert.NilError(t, err)
+			assert.DeepEqual(t, packages, test.want)
 		})
 	}
 }
@@ -394,6 +418,7 @@ func TestPreparationBatchesGuestPackages(t *testing.T) {
 	for _, test := range []struct {
 		name          string
 		packages      []string
+		tools         []string
 		copyGitConfig bool
 		github        bool
 		wantScript    string
@@ -402,12 +427,13 @@ func TestPreparationBatchesGuestPackages(t *testing.T) {
 		{name: implicitGitTestName, packages: []string{makeCommand}, copyGitConfig: true, wantScript: "sudo apt-get update && sudo apt-get install -y 'make' 'git'"},
 		{name: "configured Git is not duplicated", packages: []string{gitCommand, makeCommand}, copyGitConfig: true, wantScript: "sudo apt-get update && sudo apt-get install -y 'git' 'make'"},
 		{name: "GitHub dependencies without configured packages", github: true, wantScript: "sudo apt-get update && sudo apt-get install -y 'git' 'gh'"},
+		{name: "logical tool native dependency", tools: []string{logicalToolUV}, wantScript: "sudo apt-get update && sudo apt-get install -y 'pipx'"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			project, vmName, options := vmFixture(t, "")
 			root := filepath.Dir(project)
 			t.Setenv("HOME", root)
-			config := DevelopmentConfig{Packages: test.packages, CopyGitConfig: test.copyGitConfig}
+			config := DevelopmentConfig{Packages: test.packages, Tools: test.tools, CopyGitConfig: test.copyGitConfig}
 			config.GitHub.Enabled = test.github
 			err := prepareDevelopment(developmentPreparationOptions{
 				project:        project,

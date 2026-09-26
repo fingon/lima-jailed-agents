@@ -285,8 +285,13 @@ func (backend guestPackageBackend) installPackages(options guestPackageOptions, 
 	return nil
 }
 
-func (backend guestPackageBackend) developmentPackageNames(config DevelopmentConfig) []string {
+func (backend guestPackageBackend) developmentPackageNames(config DevelopmentConfig) ([]string, error) {
+	toolPlan, err := resolveLogicalTools(config.Tools)
+	if err != nil {
+		return nil, err
+	}
 	packages := append([]string{}, config.Packages...)
+	packages = append(packages, toolPlan.nativePackages...)
 	if config.GPGForwarding {
 		packages = append(packages, backend.gpgPackage)
 	}
@@ -296,7 +301,7 @@ func (backend guestPackageBackend) developmentPackageNames(config DevelopmentCon
 	if config.GitHub.Enabled {
 		packages = append(packages, backend.gitPackage, backend.ghPackage)
 	}
-	return uniqueStrings(packages)
+	return uniqueStrings(packages), nil
 }
 
 func (backend guestPackageBackend) nodePackageNames() []string {
@@ -335,7 +340,7 @@ func ensureGuestPackagesWithBackend(options guestPackageOptions, packageNames []
 }
 
 func ensureDevelopmentPackages(options guestPackageOptions, config DevelopmentConfig) (guestPackageBackend, error) {
-	if len(config.Packages) == 0 && !config.GPGForwarding && !config.CopyGitConfig && !config.GitHub.Enabled {
+	if len(config.Packages) == 0 && len(config.Tools) == 0 && !config.GPGForwarding && !config.CopyGitConfig && !config.GitHub.Enabled {
 		return guestPackageBackend{}, nil
 	}
 	guestOptions := defaultProcessOptions(options.limactlCommand, options.contexts...)
@@ -343,7 +348,10 @@ func ensureDevelopmentPackages(options guestPackageOptions, config DevelopmentCo
 	if err != nil {
 		return guestPackageBackend{}, ljaError("cannot prepare dependencies in VM %s: %w", options.vmName, err)
 	}
-	packageNames := backend.developmentPackageNames(config)
+	packageNames, err := backend.developmentPackageNames(config)
+	if err != nil {
+		return guestPackageBackend{}, ljaError("cannot resolve logical tools in VM %s: %w", options.vmName, err)
+	}
 	if err := ensureGuestPackagesWithBackend(options, packageNames, backend); err != nil {
 		return guestPackageBackend{}, err
 	}
