@@ -2,7 +2,7 @@
 
 ## Logical tools
 
-- [ ] Implement the [planned logical tools setting](DESIGN.md#logical-tools-planned).
+- [x] Implement the [planned logical tools setting](DESIGN.md#logical-tools-planned).
   Add `tools` parsing and validation, `DevelopmentConfig.Tools`, cloning, and
   deterministic configuration output. Default to an empty list; match package
   replacement, stable deduplication, and explicit-empty inheritance behavior.

@@ -6,6 +6,7 @@ lima: {}
 packages:
   - git
   - make
+tools: []
 agents: []
 copy_git_config: true
 env: {}

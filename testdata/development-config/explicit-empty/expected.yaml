@@ -4,6 +4,7 @@ github:
   token_command: []
 lima: {}
 packages: []
+tools: []
 agents: []
 copy_git_config: true
 env: {}

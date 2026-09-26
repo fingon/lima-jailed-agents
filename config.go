@@ -25,6 +25,7 @@ const (
 	configGitHubTokenCommand            = "token_command"
 	configLima                          = "lima"
 	configPackages                      = "packages"
+	configTools                         = "tools"
 	configAgents                        = "agents"
 	configCopyGitConfig                 = "copy_git_config"
 	configEnvironment                   = "env"
@@ -36,6 +37,8 @@ const (
 	githubFallbackTokenEnvironment      = "GITHUB_TOKEN"
 	makeCommand                         = "make"
 	packageInstalledStatus              = "install ok installed"
+	logicalToolUV                       = "uv"
+	logicalToolPrek                     = "prek"
 	yamlBoolTag                         = "!!bool"
 	yamlMapTag                          = "!!map"
 	yamlNullTag                         = "!!null"
@@ -64,6 +67,7 @@ type DevelopmentConfig struct {
 	GitHub         GitHubConfig
 	Lima           map[string]any
 	Packages       []string
+	Tools          []string
 	Agents         []string
 	CopyGitConfig  bool
 	Env            map[string]string
@@ -76,6 +80,7 @@ type DevelopmentConfigYAML struct {
 	GitHub         GitHubConfig      `yaml:"github"`
 	Lima           map[string]any    `yaml:"lima"`
 	Packages       []string          `yaml:"packages"`
+	Tools          []string          `yaml:"tools"`
 	Agents         []string          `yaml:"agents"`
 	CopyGitConfig  bool              `yaml:"copy_git_config"`
 	Env            map[string]string `yaml:"env"`
@@ -88,6 +93,7 @@ func DefaultDevelopmentConfig() DevelopmentConfig {
 		GitHub:         GitHubConfig{TokenCommand: []string{}},
 		Lima:           make(map[string]any),
 		Packages:       []string{gitCommand, makeCommand},
+		Tools:          []string{},
 		Agents:         []string{},
 		CopyGitConfig:  true,
 		Env:            make(map[string]string),
@@ -102,6 +108,7 @@ func (config DevelopmentConfig) clone() DevelopmentConfig {
 		GitHub:         config.GitHub.clone(),
 		Lima:           mergeLimaConfig(nil, config.Lima),
 		Packages:       append([]string{}, config.Packages...),
+		Tools:          append([]string{}, config.Tools...),
 		Agents:         append([]string{}, config.Agents...),
 		CopyGitConfig:  config.CopyGitConfig,
 		Env:            make(map[string]string, len(config.Env)),
@@ -126,6 +133,7 @@ func (config DevelopmentConfig) AsYAML() DevelopmentConfigYAML {
 		GitHub:         config.GitHub.clone(),
 		Lima:           mergeLimaConfig(nil, config.Lima),
 		Packages:       packages,
+		Tools:          append([]string{}, config.Tools...),
 		Agents:         append([]string{}, config.Agents...),
 		CopyGitConfig:  config.CopyGitConfig,
 		Env:            environment,
@@ -177,6 +185,8 @@ type sourceDevelopmentConfig struct {
 	Lima                             map[string]any
 	Packages                         []string
 	HasPackages                      bool
+	Tools                            []string
+	HasTools                         bool
 	Agents                           []string
 	HasAgents                        bool
 	CopyGitConfig                    bool
@@ -417,7 +427,7 @@ func decodeDevelopmentConfig(content []byte, isProject bool) (sourceDevelopmentC
 		return sourceDevelopmentConfig{}, err
 	}
 	allowed := map[string]bool{
-		configGPGForwarding: true, configGitHub: true, configLima: true, configPackages: true, configAgents: true, configCopyGitConfig: true, configEnvironment: true,
+		configGPGForwarding: true, configGitHub: true, configLima: true, configPackages: true, configTools: true, configAgents: true, configCopyGitConfig: true, configEnvironment: true,
 		configEnvironmentPassthrough: true, configSetup: true,
 	}
 	if isProject {
@@ -460,6 +470,18 @@ func decodeDevelopmentConfig(content []byte, isProject bool) (sourceDevelopmentC
 			}
 		}
 		decoded.Packages, decoded.HasPackages = packages, true
+	}
+	if node, present := values[configTools]; present {
+		tools, err := decodeConfigArray(node, configTools)
+		if err != nil {
+			return sourceDevelopmentConfig{}, err
+		}
+		for index, toolName := range tools {
+			if toolName != logicalToolUV && toolName != logicalToolPrek {
+				return sourceDevelopmentConfig{}, configNodeError(node.Content[index], "invalid tool: %s; expected one of %s, %s", toolName, logicalToolUV, logicalToolPrek)
+			}
+		}
+		decoded.Tools, decoded.HasTools = tools, true
 	}
 	if node, present := values[configAgents]; present {
 		agents, err := decodeConfigArray(node, configAgents)
@@ -563,6 +585,9 @@ func applyDevelopmentConfig(config DevelopmentConfig, source sourceDevelopmentCo
 	}
 	if source.HasPackages {
 		config.Packages = uniqueStrings(source.Packages)
+	}
+	if source.HasTools {
+		config.Tools = uniqueStrings(source.Tools)
 	}
 	if source.HasAgents {
 		config.Agents = uniqueStrings(source.Agents)

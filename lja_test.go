@@ -135,6 +135,35 @@ func TestDevelopmentConfigurationProjectAgentsCanClearGlobalDefaults(t *testing.
 	assert.DeepEqual(t, config.Agents, []string{})
 }
 
+func TestDevelopmentConfigurationTools(t *testing.T) {
+	assert.DeepEqual(t, DefaultDevelopmentConfig().Tools, []string{})
+
+	global, err := decodeDevelopmentConfig([]byte("tools: [prek, uv, prek]\n"), false)
+	assert.NilError(t, err)
+	assert.DeepEqual(t, global.Tools, []string{logicalToolPrek, logicalToolUV, logicalToolPrek})
+	assert.Equal(t, global.HasTools, true)
+
+	project, err := decodeDevelopmentConfig([]byte("tools: [uv, prek, uv]\n"), true)
+	assert.NilError(t, err)
+	config := applyDevelopmentConfig(DefaultDevelopmentConfig(), global, "global")
+	config = applyDevelopmentConfig(config, project, "project")
+	assert.DeepEqual(t, config.Tools, []string{logicalToolUV, logicalToolPrek})
+
+	empty, err := decodeDevelopmentConfig([]byte("tools: []\n"), true)
+	assert.NilError(t, err)
+	config = applyDevelopmentConfig(config, empty, "project")
+	assert.DeepEqual(t, config.Tools, []string{})
+
+	cloned := config.clone()
+	cloned.Tools = append(cloned.Tools, logicalToolPrek)
+	assert.DeepEqual(t, config.Tools, []string{})
+}
+
+func TestDevelopmentConfigurationRejectsUnknownTools(t *testing.T) {
+	err := ValidateDevelopmentConfig([]byte("tools: [unknown]\n"), true)
+	assert.ErrorContains(t, err, "invalid tool")
+}
+
 func TestDevelopmentConfigurationRejectsManagedEnvironment(t *testing.T) {
 	err := ValidateDevelopmentConfig([]byte(`{"env":{"CODEX_HOME":"/tmp/state"}}`), true)
 	assert.ErrorContains(t, err, "managed by LJA")
@@ -351,6 +380,7 @@ func TestExplicitProjectSelectionUsesExactDirectory(t *testing.T) {
 func TestDevelopmentConfigurationYAMLOutputIsDeterministic(t *testing.T) {
 	config := DevelopmentConfig{
 		Packages:      []string{makeCommand, gitCommand},
+		Tools:         []string{logicalToolPrek, logicalToolUV},
 		Agents:        []string{claudeAgentName},
 		CopyGitConfig: false,
 		Env: map[string]string{
@@ -360,7 +390,7 @@ func TestDevelopmentConfigurationYAMLOutputIsDeterministic(t *testing.T) {
 		EnvPassthrough: []string{tokenEnvironment},
 		Setup:          []SetupCommand{{Source: "/private/source.yaml", Index: 7, Command: "make dep\nmake build\n"}},
 	}
-	want := "gpg_forwarding: false\ngithub:\n  enabled: false\n  token_command: []\nlima: {}\npackages:\n  - make\n  - git\nagents:\n  - claude\ncopy_git_config: false\nenv:\n  A_FIRST: first\n  Z_LAST: last\nenv_passthrough:\n  - TOKEN\nsetup:\n  - |\n    make dep\n    make build\n"
+	want := "gpg_forwarding: false\ngithub:\n  enabled: false\n  token_command: []\nlima: {}\npackages:\n  - make\n  - git\ntools:\n  - prek\n  - uv\nagents:\n  - claude\ncopy_git_config: false\nenv:\n  A_FIRST: first\n  Z_LAST: last\nenv_passthrough:\n  - TOKEN\nsetup:\n  - |\n    make dep\n    make build\n"
 	encoded, err := yamlConfiguration(config)
 	assert.NilError(t, err)
 	assert.Equal(t, string(encoded), want)
@@ -375,6 +405,7 @@ func TestDevelopmentConfigurationYAMLOutputIsDeterministic(t *testing.T) {
 	assert.Assert(t, strings.Contains(string(empty), "env: {}\n"))
 	assert.Assert(t, strings.Contains(string(empty), "env_passthrough: []\n"))
 	assert.Assert(t, strings.Contains(string(empty), "agents: []\n"))
+	assert.Assert(t, strings.Contains(string(empty), "tools: []\n"))
 	assert.Assert(t, strings.Contains(string(empty), "setup: []\n"))
 	assert.Assert(t, strings.HasSuffix(string(empty), "\n"))
 }

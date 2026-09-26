@@ -10,6 +10,7 @@ github:
 lima: {}
 packages:
   - ninja-build
+tools: []
 agents:
   - opencode
 copy_git_config: false
