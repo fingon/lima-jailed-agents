@@ -16,28 +16,33 @@ import (
 )
 
 const (
-	vmProcessEnv                 = "LJA_TEST_VM_PROCESS"
-	vmDatabaseEnv                = "LJA_TEST_VM_DATABASE"
-	vmFailureEnv                 = "LJA_TEST_VM_FAILURE"
-	vmBinaryEnv                  = "LJA_TEST_BINARY"
-	vmPackageInstallNoopEnv      = "LJA_TEST_PACKAGE_INSTALL_NOOP"
-	vmNodeRuntimeModeEnv         = "LJA_TEST_NODE_RUNTIME_MODE"
-	vmAgentInstallFailureEnv     = "LJA_TEST_AGENT_INSTALL_FAILURE"
-	testOriginalID               = "original"
-	testReplacementID            = "replacement"
-	testSetupCommand             = "test-setup"
-	deleteBackupStage            = "delete-backup"
-	connectStage                 = "connect"
-	makefileName                 = "Makefile"
-	renameHelpStage              = "rename-help"
-	packageInstallStage          = "package-install"
-	nodeRuntimeFailureMode       = "failing"
-	nodeRuntimeFailureMessage    = "node runtime failed"
-	logicalToolVersionOutput     = "v1.0.0"
-	configuredPackagesTestName   = "configured packages"
-	implicitGitTestName          = "implicit Git"
-	multiplePackageInstallScript = "sudo apt-get update && sudo apt-get install -y 'make' 'ninja-build'"
-	nodePackagesFixture          = "[nodejs, npm]"
+	vmProcessEnv                          = "LJA_TEST_VM_PROCESS"
+	vmDatabaseEnv                         = "LJA_TEST_VM_DATABASE"
+	vmFailureEnv                          = "LJA_TEST_VM_FAILURE"
+	vmBinaryEnv                           = "LJA_TEST_BINARY"
+	vmPackageInstallNoopEnv               = "LJA_TEST_PACKAGE_INSTALL_NOOP"
+	vmNodeRuntimeModeEnv                  = "LJA_TEST_NODE_RUNTIME_MODE"
+	vmAgentInstallFailureEnv              = "LJA_TEST_AGENT_INSTALL_FAILURE"
+	logicalToolInstallFailureEnv          = "LJA_TEST_LOGICAL_TOOL_INSTALL_FAILURE"
+	logicalToolProbeFailureEnv            = "LJA_TEST_LOGICAL_TOOL_PROBE_FAILURE"
+	logicalToolConnectionFailureEnv       = "LJA_TEST_LOGICAL_TOOL_CONNECTION_FAILURE"
+	testOriginalID                        = "original"
+	testReplacementID                     = "replacement"
+	testSetupCommand                      = "test-setup"
+	deleteBackupStage                     = "delete-backup"
+	connectStage                          = "connect"
+	makefileName                          = "Makefile"
+	renameHelpStage                       = "rename-help"
+	packageInstallStage                   = "package-install"
+	nodeRuntimeFailureMode                = "failing"
+	nodeRuntimeFailureMessage             = "node runtime failed"
+	logicalToolVersionOutput              = "v1.0.0"
+	logicalToolInstallationFailureMessage = "logical tool installation failed"
+	installationFailureTestName           = "installation failure"
+	configuredPackagesTestName            = "configured packages"
+	implicitGitTestName                   = "implicit Git"
+	multiplePackageInstallScript          = "sudo apt-get update && sudo apt-get install -y 'make' 'ninja-build'"
+	nodePackagesFixture                   = "[nodejs, npm]"
 )
 
 type testMount struct {
@@ -266,9 +271,21 @@ func runVMProcess() error {
 		delete(database.VMs, name)
 	case limaShellOperation:
 		if len(guestArguments) == 3 && guestArguments[0] == pipxCommand && guestArguments[1] == installCommand && guestArguments[2] == logicalToolUV {
+			if os.Getenv(logicalToolInstallFailureEnv) == logicalToolUV {
+				if err := database.save(); err != nil {
+					return err
+				}
+				return vmProcessExitError{code: 23, message: logicalToolInstallationFailureMessage}
+			}
 			database.LogicalTools[logicalToolUV] = true
 		}
 		if len(guestArguments) == 4 && guestArguments[0] == logicalToolUV && guestArguments[1] == toolSubcommand && guestArguments[2] == installCommand && guestArguments[3] == logicalToolPrek {
+			if os.Getenv(logicalToolInstallFailureEnv) == logicalToolPrek {
+				if err := database.save(); err != nil {
+					return err
+				}
+				return vmProcessExitError{code: 23, message: logicalToolInstallationFailureMessage}
+			}
 			database.LogicalTools[logicalToolPrek] = true
 		}
 		if len(guestArguments) >= 3 && guestArguments[0] == sudoCommand && guestArguments[1] == npmCommand && guestArguments[2] == installCommand && os.Getenv(vmAgentInstallFailureEnv) == "1" {
@@ -294,9 +311,21 @@ func runVMProcess() error {
 			}
 		}
 		if len(guestArguments) == 2 && guestArguments[1] == versionFlag && (guestArguments[0] == pipxCommand || guestArguments[0] == logicalToolUV || guestArguments[0] == logicalToolPrek) {
+			if os.Getenv(logicalToolProbeFailureEnv) == guestArguments[0] {
+				if err := database.save(); err != nil {
+					return err
+				}
+				return vmProcessExitError{code: 23, message: "logical tool probe failed"}
+			}
 			if _, err := fmt.Fprintln(os.Stdout, logicalToolVersionOutput); err != nil {
 				return err
 			}
+		}
+		if len(guestArguments) == 1 && guestArguments[0] == guestConnectionProbe && os.Getenv(logicalToolConnectionFailureEnv) == "1" {
+			if err := database.save(); err != nil {
+				return err
+			}
+			return vmProcessExitError{code: 23, message: "logical tool guest connection failed"}
 		}
 		if len(guestArguments) > 0 && guestArguments[0] == dpkgQueryCommand && database.PackageInstallationDone {
 			if _, err := fmt.Fprint(os.Stdout, packageInstalledStatus); err != nil {
@@ -361,6 +390,9 @@ func vmFixture(t *testing.T, status string) (string, string, WorkflowOptions) {
 	t.Setenv(vmBinaryEnv, binary)
 	t.Setenv(vmDatabaseEnv, filepath.Join(root, "vms.json"))
 	t.Setenv(vmFailureEnv, "")
+	t.Setenv(logicalToolInstallFailureEnv, "")
+	t.Setenv(logicalToolProbeFailureEnv, "")
+	t.Setenv(logicalToolConnectionFailureEnv, "")
 	database := vmDatabase{VMs: map[string]testVM{}, LogicalTools: map[string]bool{}}
 	if status != "" {
 		database.VMs[name] = testVM{Name: name, Status: status, ID: testOriginalID, Config: map[string]any{
@@ -427,7 +459,7 @@ func TestPreparationBatchesGuestPackages(t *testing.T) {
 		{name: implicitGitTestName, packages: []string{makeCommand}, copyGitConfig: true, wantScript: "sudo apt-get update && sudo apt-get install -y 'make' 'git'"},
 		{name: "configured Git is not duplicated", packages: []string{gitCommand, makeCommand}, copyGitConfig: true, wantScript: "sudo apt-get update && sudo apt-get install -y 'git' 'make'"},
 		{name: "GitHub dependencies without configured packages", github: true, wantScript: "sudo apt-get update && sudo apt-get install -y 'git' 'gh'"},
-		{name: "logical tool native dependency", tools: []string{logicalToolUV}, wantScript: "sudo apt-get update && sudo apt-get install -y 'pipx'"},
+		{name: "logical tool native dependency", tools: []string{logicalToolUV}, wantScript: logicalToolPipxInstallScript},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			project, vmName, options := vmFixture(t, "")
@@ -522,6 +554,10 @@ func TestPreparationInstallsLogicalToolsBeforeSetup(t *testing.T) {
 		}
 		if len(operation) > 0 && operation[len(operation)-1] == testSetupCommand {
 			setupIndex = index
+			assert.Equal(t, operation[6], guestPathBootstrapScript)
+		}
+		if (len(guestArguments) == 3 && guestArguments[0] == pipxCommand && guestArguments[1] == installCommand) || (len(guestArguments) == 4 && guestArguments[0] == logicalToolUV && guestArguments[1] == toolSubcommand && guestArguments[2] == installCommand) {
+			assert.Equal(t, operation[6], guestPathBootstrapScript)
 		}
 	}
 	assert.Assert(t, packageIndex >= 0)
@@ -563,6 +599,78 @@ func TestPreparationReusesLogicalToolsWithoutUpgrading(t *testing.T) {
 	assert.Equal(t, firstOperationCount < len(database.Operations), true)
 	assert.Equal(t, packageInstallations, 1)
 	assert.Equal(t, toolInstallations, 2)
+}
+
+func TestPreparationReportsLogicalToolFailures(t *testing.T) {
+	for _, test := range []struct {
+		name              string
+		installFailure    string
+		probeFailure      string
+		connectionFailure bool
+		installed         bool
+		want              string
+	}{
+		{name: installationFailureTestName, installFailure: logicalToolUV, want: "cannot install logical tool uv"},
+		{name: "failing executable", probeFailure: logicalToolUV, installed: true, want: "guest executable uv is present but failed"},
+		{name: "connection failure", connectionFailure: true, want: guestConnectionFailureError},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			project, vmName, options := vmFixture(t, limaStatusRunning)
+			database, err := readVMDatabase()
+			assert.NilError(t, err)
+			database.PackageInstallationDone = true
+			database.LogicalTools[logicalToolUV] = test.installed
+			assert.NilError(t, database.save())
+			t.Setenv(logicalToolInstallFailureEnv, test.installFailure)
+			t.Setenv(logicalToolProbeFailureEnv, test.probeFailure)
+			if test.connectionFailure {
+				t.Setenv(logicalToolConnectionFailureEnv, "1")
+			}
+
+			config := DevelopmentConfig{Packages: []string{}, Tools: []string{logicalToolUV}, CopyGitConfig: false}
+			err = prepareDevelopment(developmentPreparationOptions{
+				project:        project,
+				vmName:         vmName,
+				config:         &config,
+				limactlCommand: options.LimaCommand,
+			})
+			assert.ErrorContains(t, err, test.want)
+			assert.ErrorContains(t, err, vmName)
+		})
+	}
+}
+
+func TestConfiguredLogicalToolsAreAvailableToLaunchedCommand(t *testing.T) {
+	project, vmName, options := vmFixture(t, limaStatusRunning)
+	config := DevelopmentConfig{Packages: []string{}, Tools: []string{logicalToolPrek}, CopyGitConfig: false}
+	options.Development = &config
+	code, err := RunAgent(project, AgentRunOptions{
+		AgentName:        codexAgentName,
+		Arguments:        []string{versionFlag},
+		WorkingDirectory: project,
+		Workflow:         options,
+	})
+	assert.NilError(t, err)
+	assert.Equal(t, code, 0)
+
+	database, err := readVMDatabase()
+	assert.NilError(t, err)
+	assert.Equal(t, database.LogicalTools[logicalToolUV], true)
+	assert.Equal(t, database.LogicalTools[logicalToolPrek], true)
+	last := database.Operations[len(database.Operations)-1]
+	assert.Equal(t, last[3], vmName)
+	programIndex := -1
+	for index, argument := range last {
+		if argument == programName {
+			programIndex = index
+			break
+		}
+	}
+	assert.Assert(t, programIndex >= 3)
+	assert.Equal(t, last[programIndex-3], shellCommand)
+	assert.Equal(t, last[programIndex-1], guestPathBootstrapScript)
+	assert.Equal(t, last[programIndex], programName)
+	assert.Equal(t, last[programIndex+1], codexAgentName)
 }
 
 func TestPreparationSkipsReadyAndEmptyGuestPackages(t *testing.T) {
@@ -617,7 +725,7 @@ func TestPreparationReportsBatchPackageFailures(t *testing.T) {
 		noop    bool
 		want    string
 	}{
-		{name: "installation failure", failure: packageInstallStage, want: "cannot install dependencies make, ninja-build with ubuntu/debian backend"},
+		{name: installationFailureTestName, failure: packageInstallStage, want: "cannot install dependencies make, ninja-build with ubuntu/debian backend"},
 		{name: "verification failure", noop: true, want: "installation did not provide the requested package"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

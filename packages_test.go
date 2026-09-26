@@ -16,6 +16,9 @@ const (
 	packageTestModeEnv           = "LJA_TEST_PACKAGE_MODE"
 	packageTestMissingToolEnv    = "LJA_TEST_PACKAGE_MISSING_TOOL"
 	gccPackageName               = "gcc"
+	ubuntuTestName               = "Ubuntu"
+	debianTestName               = "Debian"
+	logicalToolPipxInstallScript = "sudo apt-get update && sudo apt-get install -y 'pipx'"
 	ubuntuInstallMakeGCC         = "sudo apt-get update && sudo apt-get install -y 'make' 'gcc'"
 	packageQueryFailureError     = "package database query failed"
 	guestConnectionFailureError  = "cannot connect to guest VM"
@@ -67,7 +70,7 @@ func TestPackageBackendSelection(t *testing.T) {
 		wantToolCount   int
 	}{
 		{
-			name:            "Ubuntu",
+			name:            ubuntuTestName,
 			id:              ubuntuOSID,
 			wantName:        ubuntuDebianPackageBackend,
 			wantQuery:       []string{dpkgQueryCommand, dpkgShowFlag, dpkgShowFormat, makeCommand},
@@ -78,7 +81,7 @@ func TestPackageBackendSelection(t *testing.T) {
 			wantToolCount:   3,
 		},
 		{
-			name:            "Debian",
+			name:            debianTestName,
 			id:              "debian",
 			wantName:        ubuntuDebianPackageBackend,
 			wantQuery:       []string{dpkgQueryCommand, dpkgShowFlag, dpkgShowFormat, makeCommand},
@@ -120,6 +123,27 @@ func TestPackageBackendSelection(t *testing.T) {
 	}
 	_, err := packageBackendForOSRelease(guestOSRelease{ID: "arch"})
 	assert.ErrorContains(t, err, "supported package backends")
+}
+
+func TestLogicalToolNativeDependenciesUseGuestBackends(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		id          string
+		wantInstall []string
+	}{
+		{name: ubuntuTestName, id: ubuntuOSID, wantInstall: []string{shellCommand, shellStrictFlag, shellCommandFlag, logicalToolPipxInstallScript}},
+		{name: debianTestName, id: debianOSID, wantInstall: []string{shellCommand, shellStrictFlag, shellCommandFlag, logicalToolPipxInstallScript}},
+		{name: "Fedora", id: fedoraPackageBackend, wantInstall: []string{sudoCommand, dnfCommand, installCommand, "-y", pipxCommand}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			backend, err := packageBackendForOSRelease(guestOSRelease{ID: test.id})
+			assert.NilError(t, err)
+			packages, err := backend.developmentPackageNames(DevelopmentConfig{Tools: []string{logicalToolUV}})
+			assert.NilError(t, err)
+			assert.DeepEqual(t, packages, []string{pipxCommand})
+			assert.DeepEqual(t, backend.installArguments(packages), test.wantInstall)
+		})
+	}
 }
 
 func TestPackageQueryMissingClassification(t *testing.T) {

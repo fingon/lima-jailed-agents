@@ -18,7 +18,7 @@
   them available through the guest PATH bootstrap. Distinguish missing commands
   from failing commands and connection errors; report failures with tool and
   VM context.
-- [ ] Add table-driven configuration and provisioning tests covering defaults,
+- [x] Add table-driven configuration and provisioning tests covering defaults,
   empty lists, inheritance, cloning/output, duplicates, unknown names, each
   dependency chain, reversed selection order, shared prerequisites, empty
   `packages`, existing installations, installation/probe failures, and tool
