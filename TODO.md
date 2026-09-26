@@ -12,7 +12,7 @@
   `uv tool install prek`. Deduplicate prerequisites and install in dependency
   order, using the guest package backend for native dependencies even with an
   empty configured package list.
-- [ ] Integrate tool preparation into the locked development-preparation flow
+- [x] Integrate tool preparation into the locked development-preparation flow
   after native packages and before setup. Install as the guest user, reuse
   working executables without upgrading, verify installed commands, and make
   them available through the guest PATH bootstrap. Distinguish missing commands

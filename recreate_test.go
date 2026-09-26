@@ -488,6 +488,83 @@ func TestPreparationKeepsPackageInstallationBeforeSetup(t *testing.T) {
 	assert.Assert(t, packageIndex < setupIndex)
 }
 
+func TestPreparationInstallsLogicalToolsBeforeSetup(t *testing.T) {
+	project, vmName, options := vmFixture(t, limaStatusRunning)
+	config := DevelopmentConfig{
+		Packages:      []string{},
+		Tools:         []string{logicalToolPrek},
+		CopyGitConfig: false,
+		Setup:         []SetupCommand{{Command: testSetupCommand}},
+	}
+	assert.NilError(t, prepareDevelopment(developmentPreparationOptions{
+		project:        project,
+		vmName:         vmName,
+		config:         &config,
+		limactlCommand: options.LimaCommand,
+	}))
+
+	database, err := readVMDatabase()
+	assert.NilError(t, err)
+	packageIndex := -1
+	uvIndex := -1
+	prekIndex := -1
+	setupIndex := -1
+	for index, operation := range database.Operations {
+		guestArguments := unwrapGuestPathArguments(operation[4:])
+		if isPackageInstallationCommand(operation[4:]) {
+			packageIndex = index
+		}
+		if len(guestArguments) == 3 && guestArguments[0] == pipxCommand && guestArguments[1] == installCommand && guestArguments[2] == logicalToolUV {
+			uvIndex = index
+		}
+		if len(guestArguments) == 4 && guestArguments[0] == logicalToolUV && guestArguments[1] == toolSubcommand && guestArguments[2] == installCommand && guestArguments[3] == logicalToolPrek {
+			prekIndex = index
+		}
+		if len(operation) > 0 && operation[len(operation)-1] == testSetupCommand {
+			setupIndex = index
+		}
+	}
+	assert.Assert(t, packageIndex >= 0)
+	assert.Assert(t, uvIndex >= 0)
+	assert.Assert(t, prekIndex >= 0)
+	assert.Assert(t, setupIndex >= 0)
+	assert.Assert(t, packageIndex < uvIndex)
+	assert.Assert(t, uvIndex < prekIndex)
+	assert.Assert(t, prekIndex < setupIndex)
+}
+
+func TestPreparationReusesLogicalToolsWithoutUpgrading(t *testing.T) {
+	project, vmName, options := vmFixture(t, limaStatusRunning)
+	config := DevelopmentConfig{Packages: []string{}, Tools: []string{logicalToolPrek}, CopyGitConfig: false}
+	preparation := developmentPreparationOptions{
+		project:        project,
+		vmName:         vmName,
+		config:         &config,
+		limactlCommand: options.LimaCommand,
+	}
+	assert.NilError(t, prepareDevelopment(preparation))
+	database, err := readVMDatabase()
+	assert.NilError(t, err)
+	firstOperationCount := len(database.Operations)
+	assert.NilError(t, prepareDevelopment(preparation))
+	database, err = readVMDatabase()
+	assert.NilError(t, err)
+	toolInstallations := 0
+	packageInstallations := 0
+	for _, operation := range database.Operations {
+		guestArguments := unwrapGuestPathArguments(operation[4:])
+		if isPackageInstallationCommand(operation[4:]) {
+			packageInstallations++
+		}
+		if (len(guestArguments) == 3 && guestArguments[0] == pipxCommand && guestArguments[1] == installCommand) || (len(guestArguments) == 4 && guestArguments[0] == logicalToolUV && guestArguments[1] == toolSubcommand && guestArguments[2] == installCommand) {
+			toolInstallations++
+		}
+	}
+	assert.Equal(t, firstOperationCount < len(database.Operations), true)
+	assert.Equal(t, packageInstallations, 1)
+	assert.Equal(t, toolInstallations, 2)
+}
+
 func TestPreparationSkipsReadyAndEmptyGuestPackages(t *testing.T) {
 	for _, test := range []struct {
 		name               string

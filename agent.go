@@ -418,6 +418,9 @@ func prepareDevelopment(options developmentPreparationOptions) (returnErr error)
 	if err := verifyDevelopmentExecutables(packageOptions, actualConfig, backend); err != nil {
 		return err
 	}
+	if err := ensureLogicalTools(packageOptions, actualConfig.Tools); err != nil {
+		return err
+	}
 	if actualConfig.CopyGitConfig {
 		prepareGitFunction := prepareGit
 		if actualConfig.GitHub.Enabled {
