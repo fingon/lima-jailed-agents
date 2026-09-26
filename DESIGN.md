@@ -334,6 +334,52 @@ settings. It will not resolve passthrough values or include setup provenance.
 Configuration loading never rewrites source files, and the exported project
 filename constant is `.lja.yaml`.
 
+### Logical tools (planned)
+
+This setting is not implemented yet. The implementation work is tracked in
+[TODO.md](TODO.md#logical-tools).
+
+A new `tools` sequence of logical tool names will sit alongside `packages`,
+defaulting to `[]`. Global and project lists will follow package-list semantics:
+a project list replaces the inherited list, duplicates are removed in stable
+order, and an explicit empty list clears inherited selections. Initially the
+supported names will be `uv` and `prek`; unknown names will be configuration
+errors. Each name selects built-in installation and dependency logic rather
+than a native package name or a user-supplied installation command.
+
+| Tool | Prerequisite | Installation as the guest user |
+| --- | --- | --- |
+| `uv` | Native `pipx` dependency | `pipx install uv` |
+| `prek` | Logical tool `uv` | `uv tool install prek` |
+
+For example, this planned configuration requests the complete
+`pipx → uv → prek` dependency chain:
+
+```yaml
+tools:
+  - prek
+```
+
+LJA will resolve transitive prerequisites, deduplicate shared dependencies,
+and prepare them in dependency order, regardless of configured list order.
+Native prerequisites will use the existing guest package backend, including
+when `packages: []` is configured. `pipx` is an automatic native prerequisite,
+not an additional selectable logical tool in the initial release.
+`DevelopmentConfig.Tools` will expose the requested list to package callers;
+`lja config` will report that effective list, not its expanded dependencies.
+
+Tool preparation will run after native package installation and before project
+setup within the existing locked development-preparation flow. Installations
+will run as the guest user, with executables available through the existing
+guest PATH bootstrap to setup and launched commands. Working installations
+will be reused without upgrades, and required executables will be verified
+after installation. A missing executable permits installation; a present but
+failing executable, guest connection failure, or installation failure will
+return an error with tool and VM context rather than being silently ignored.
+
+Version pinning and an explicit tool-upgrade interface are outside the initial
+feature. Host-side `make dep` behavior is unchanged.
+
 ## Guest preparation and agents
 
 When development packages are needed, LJA reads the guest `/etc/os-release`
