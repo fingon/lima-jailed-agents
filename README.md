@@ -111,10 +111,12 @@ commands are forwarded without that default. OpenCode is started with an
 allow-permission configuration. Explicit native permission options always take
 precedence.
 
-Claude launches disable Claude Code's background auto-updater. LJA also marks
-the selected project and the directory where Claude was invoked as trusted in
-its isolated Claude state, so project-local settings work without a trust
-prompt. Login-only launches do not change trust state.
+Codex launches suppress Codex's startup update check in isolated
+`.codex/config.toml`; an explicit LJA agent update remains available. Claude
+launches disable Claude Code's background auto-updater. LJA also marks the
+selected project and the directory where Claude was invoked as trusted in its
+isolated Claude state, so project-local settings work without a trust prompt.
+Login-only launches do not change trust state.
 
 ## Project discovery and VMs
 
@@ -385,12 +387,14 @@ Missing sources are optional. Existing destinations are replaced atomically;
 other host-agent settings and credentials are not imported.
 
 Codex trust entries for the project and launch directory are maintained in the
-selected `.codex/config.toml`. The editor preserves unrelated text and
-comments, supports ordinary, dotted-key, and inline project tables, and refuses
-malformed or incompatible TOML layouts without writing the file. Claude trust
-entries use `<state>/.claude/.claude.json`. Both editors preserve unrelated
-settings and refuse malformed or incompatible layouts without writing the file.
-Login-only launches do not change trust entries.
+selected `.codex/config.toml`. Preparation also sets the top-level
+`check_for_update_on_startup` setting to `false`, while preserving unrelated
+text and comments. The editor supports ordinary, dotted-key, and inline
+project tables, and refuses malformed or incompatible TOML layouts without
+writing the file. Claude trust entries use `<state>/.claude/.claude.json`.
+Both editors preserve unrelated settings and refuse malformed or incompatible
+layouts without writing the file. Login-only launches do not change trust
+entries.
 
 ## Security boundary and limitations
 

@@ -34,6 +34,7 @@ const (
 	scalarProjectsTOML              = "projects = \"scalar\"\n"
 	codexMalformedValue             = "trust_level =\n"
 	codexDuplicateDefinitionContent = "trust_level = \"untrusted\"\ntrust_level = \"trusted\"\n"
+	codexInvalidUpdateValue         = "check_for_update_on_startup = \"yes\"\n"
 )
 
 func readCodexEditFixture(t *testing.T, name string) string {
@@ -249,6 +250,55 @@ func TestCodexTrustedConfigRejectsInvalidDocumentsAndTypes(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			_, err := CodexTrustedConfig(test.content, []string{project})
 			assert.ErrorContains(t, err, test.want)
+		})
+	}
+}
+
+func TestCodexConfiguredConfigSuppressesStartupUpdates(t *testing.T) {
+	root := t.TempDir()
+	project := filepath.Join(root, "project")
+	assert.NilError(t, os.Mkdir(project, 0o755))
+	quotedProject := strconv.Quote(project)
+	trustedProject := "[projects." + quotedProject + "]\ntrust_level = \"trusted\"\n"
+	tests := []struct {
+		name      string
+		content   string
+		expected  string
+		wantError string
+	}{
+		{
+			name:     "inserts setting before project tables",
+			content:  trustedProject,
+			expected: "check_for_update_on_startup = false\n" + trustedProject,
+		},
+		{
+			name:     "replaces enabled setting and preserves comment",
+			content:  "check_for_update_on_startup = true # centrally managed\n" + trustedProject,
+			expected: "check_for_update_on_startup = false # centrally managed\n" + trustedProject,
+		},
+		{
+			name:     "already suppressed is unchanged",
+			content:  "check_for_update_on_startup = false\n" + trustedProject,
+			expected: "check_for_update_on_startup = false\n" + trustedProject,
+		},
+		{
+			name:      "rejects incompatible setting type",
+			content:   codexInvalidUpdateValue,
+			wantError: booleanTypeErrorMessage,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			updated, err := codexConfiguredConfig(test.content, []string{project})
+			if test.wantError != "" {
+				assert.ErrorContains(t, err, test.wantError)
+				return
+			}
+			assert.NilError(t, err)
+			assert.Equal(t, updated, test.expected)
+			repeated, err := codexConfiguredConfig(updated, []string{project})
+			assert.NilError(t, err)
+			assert.Equal(t, repeated, updated)
 		})
 	}
 }

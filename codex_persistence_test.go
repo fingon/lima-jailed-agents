@@ -76,6 +76,7 @@ func TestCodexTrustPersistenceAtomicallyReplacesAndPreservesMode(t *testing.T) {
 	updated, err := os.ReadFile(configPath)
 	assert.NilError(t, err)
 	assert.Assert(t, strings.Contains(string(updated), `trust_level = "trusted"`))
+	assert.Assert(t, strings.Contains(string(updated), "check_for_update_on_startup = false"))
 	entries, err := os.ReadDir(configDirectory)
 	assert.NilError(t, err)
 	for _, entry := range entries {
@@ -132,6 +133,9 @@ func TestCodexTrustPersistenceLeavesFilesUnchangedOnErrors(t *testing.T) {
 		{name: "incompatible trust type", content: func(project string) string {
 			return "[projects." + strconv.Quote(project) + "]\ntrust_level = 1\n"
 		}, want: stringTypeError},
+		{name: "incompatible update setting type", content: func(string) string {
+			return codexInvalidUpdateValue
+		}, want: booleanTypeErrorMessage},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

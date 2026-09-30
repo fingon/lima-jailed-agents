@@ -774,7 +774,7 @@ func prepareAgentNamesLocked(options agentPreparationOptions, agentNames []strin
 		executables = append(executables, AgentExecutable{Name: agentName, Path: executablePath})
 	}
 	if codexRequested && len(options.trustDirectories) != 0 {
-		if err := ensureCodexDirectoryTrust(stateRoot, options.trustDirectories, options.lockDirectory); err != nil {
+		if err := ensureCodexConfiguration(stateRoot, options.trustDirectories, options.lockDirectory); err != nil {
 			return ljaError("cannot prepare agent %s in VM %s: %w", codexAgentName, options.vmName, err)
 		}
 	}

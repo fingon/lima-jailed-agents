@@ -562,7 +562,7 @@ func TestDevelopmentConfigurationFixtureValidationErrors(t *testing.T) {
 		{name: duplicateEnvironmentTestName, fixture: "invalid/duplicate-env.yaml", want: "duplicate env key"},
 		{name: "null value", fixture: "invalid/null.yaml", want: nullValueError},
 		{name: nullEnvironmentValueTestName, fixture: "invalid/null-environment.yaml", want: "must be a mapping with string values"},
-		{name: scalarCoercionTestName, fixture: "invalid/scalar-coercion.yaml", want: claudeBooleanTypeErrorMessage},
+		{name: scalarCoercionTestName, fixture: "invalid/scalar-coercion.yaml", want: booleanTypeErrorMessage},
 		{name: arrayScalarCoercionTestName, fixture: "invalid/array-scalar-coercion.yaml", want: stringTypeError},
 		{name: multipleDocumentsTestName, fixture: "invalid/multiple-documents.yaml", want: singleYAMLDocumentError},
 	}

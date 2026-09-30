@@ -14,14 +14,17 @@ import (
 )
 
 const (
-	codexStateDirectoryName = ".codex"
-	codexConfigName         = "config.toml"
-	codexProjectsKey        = "projects"
-	codexTrustKey           = "trust_level"
-	codexTrustedValue       = "trusted"
-	codexUntrustedValue     = "untrusted"
-	codexTrustedTOMLValue   = `"trusted"`
-	invalidCodexTOMLMessage = "invalid Codex TOML"
+	codexStateDirectoryName  = ".codex"
+	codexConfigName          = "config.toml"
+	codexProjectsKey         = "projects"
+	codexTrustKey            = "trust_level"
+	codexUpdateCheckKey      = "check_for_update_on_startup"
+	codexTrustedValue        = "trusted"
+	codexUntrustedValue      = "untrusted"
+	codexTrustedTOMLValue    = `"trusted"`
+	codexUpdateDisabledValue = "false"
+	codexUpdateTypeError     = "Codex update check setting " + booleanTypeErrorMessage
+	invalidCodexTOMLMessage  = "invalid Codex TOML"
 )
 
 func canonicalCodexDirectories(directories []string) ([]string, error) {
@@ -94,6 +97,24 @@ func codexSetDirectoryTrust(document *tomledit.Document, directory string) (bool
 	return true, nil
 }
 
+func codexSetUpdateSuppression(document *tomledit.Document) (bool, error) {
+	path := []string{codexUpdateCheckKey}
+	value, present := document.Get(path)
+	if present {
+		enabled, ok := value.(bool)
+		if !ok {
+			return false, ljaError(codexUpdateTypeError)
+		}
+		if !enabled {
+			return false, nil
+		}
+	}
+	if err := document.Set(path, unstable.RawMessage(codexUpdateDisabledValue)); err != nil {
+		return false, ljaError("cannot edit Codex update check setting: %w", err)
+	}
+	return true, nil
+}
+
 func validateCodexTrust(document *tomledit.Document, directories []string) error {
 	for _, directory := range directories {
 		value, present := document.Get(codexTrustPath(directory))
@@ -107,6 +128,21 @@ func validateCodexTrust(document *tomledit.Document, directories []string) error
 		if trust != codexTrustedValue {
 			return ljaError("Codex trust setting for %s is not trusted after edit", directory)
 		}
+	}
+	return nil
+}
+
+func validateCodexUpdateSuppression(document *tomledit.Document) error {
+	value, present := document.Get([]string{codexUpdateCheckKey})
+	if !present {
+		return ljaError("Codex update check setting missing after edit")
+	}
+	enabled, ok := value.(bool)
+	if !ok {
+		return ljaError(codexUpdateTypeError)
+	}
+	if enabled {
+		return ljaError("Codex update check setting is enabled after edit")
 	}
 	return nil
 }
@@ -149,10 +185,37 @@ func CodexTrustedConfig(content string, directories []string) (string, error) {
 	return codexTrustedConfig(content, directories)
 }
 
-func ensureCodexDirectoryTrust(stateRoot string, directories []string, lockDirectory string) error {
-	if len(directories) == 0 {
-		return nil
+func codexConfiguredConfig(content string, directories []string) (string, error) {
+	updated, err := codexTrustedConfig(content, directories)
+	if err != nil {
+		return "", err
 	}
+	if !utf8.ValidString(updated) {
+		return "", ljaError("configuration is not valid UTF-8")
+	}
+	document, err := tomledit.Parse([]byte(updated))
+	if err != nil {
+		return "", ljaError(invalidCodexTOMLMessage+": %w", err)
+	}
+	changed, err := codexSetUpdateSuppression(document)
+	if err != nil {
+		return "", err
+	}
+	configured := string(document.Bytes())
+	validatedDocument, err := tomledit.Parse([]byte(configured))
+	if err != nil {
+		return "", ljaError("edited Codex TOML is invalid: %w", err)
+	}
+	if err := validateCodexUpdateSuppression(validatedDocument); err != nil {
+		return "", err
+	}
+	if !changed {
+		return updated, nil
+	}
+	return configured, nil
+}
+
+func ensureCodexConfiguration(stateRoot string, directories []string, lockDirectory string) error {
 	canonicalState, err := canonicalProjectPath(stateRoot)
 	if err != nil {
 		return err
@@ -188,7 +251,7 @@ func ensureCodexDirectoryTrust(stateRoot string, directories []string, lockDirec
 		} else if !os.IsNotExist(statErr) {
 			return statErr
 		}
-		updated, configErr := codexTrustedConfig(original, directories)
+		updated, configErr := codexConfiguredConfig(original, directories)
 		if configErr != nil {
 			return configErr
 		}
@@ -236,9 +299,16 @@ func ensureCodexDirectoryTrust(stateRoot string, directories []string, lockDirec
 		return nil
 	})
 	if lockErr != nil {
-		return ljaError("cannot configure Codex directory trust in %s: %w", filepath.Join(canonicalState, codexStateDirectoryName, codexConfigName), lockErr)
+		return ljaError("cannot configure Codex state in %s: %w", filepath.Join(canonicalState, codexStateDirectoryName, codexConfigName), lockErr)
 	}
 	return nil
+}
+
+func ensureCodexDirectoryTrust(stateRoot string, directories []string, lockDirectory string) error {
+	if len(directories) == 0 {
+		return nil
+	}
+	return ensureCodexConfiguration(stateRoot, directories, lockDirectory)
 }
 
 func EnsureCodexDirectoryTrust(stateRoot string, directories []string, lockDirectory string) error {

@@ -26,7 +26,7 @@ small executable entry point in `cmd/lja`.
 | `lock.go` | Host advisory locks, state roots, directories, and instructions |
 | `git.go` | Recursive host Git configuration copying |
 | `gpg.go` | Invocation-scoped GPG agent forwarding and revocation |
-| `codex.go` | Conservative Codex TOML trust editing |
+| `codex.go` | Conservative Codex TOML trust and update editing |
 | `claude.go` | Claude updater control and JSON trust editing |
 | `agent.go` | Package provisioning, wrappers, invocation, and launch |
 | `tools.go` | Logical tool definitions, dependency resolution, and provisioning |
@@ -592,7 +592,11 @@ the existing accepted trust values (`trusted` and `untrusted`); do not silently
 replace an unexpected value or a scalar where a project table is required.
 The existing state-root lock, atomic replacement, file mode preservation,
 owner-only new files, path safety checks, and login-only behavior remain part
-of the contract. The host's separate Codex configuration is not edited.
+of the contract. During normal Codex preparation, set the top-level
+`check_for_update_on_startup` setting to `false` in the isolated configuration;
+this suppresses startup update checks without blocking an explicit LJA agent
+update. Preserve an existing setting's comments and layout, reject an
+incompatible value, and do not edit the host's separate Codex configuration.
 
 Claude trust editing updates `<state>/.claude/.claude.json`, the file selected
 by `CLAUDE_CONFIG_DIR`. It preserves unrelated JSON values and existing

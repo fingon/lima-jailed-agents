@@ -12,15 +12,15 @@ import (
 )
 
 const (
-	claudeGlobalConfigName        = ".claude.json"
-	claudeProjectsKey             = "projects"
-	claudeTrustKey                = "hasTrustDialogAccepted"
-	claudeConfigLockPrefix        = "claude-config-"
-	claudeConfigTemporaryPrefix   = ".claude.json-"
-	claudeConfigDefaultFileMode   = os.FileMode(0o600)
-	claudeTrustedJSONValue        = "true"
-	claudeBooleanTypeErrorMessage = "must be a boolean"
-	invalidClaudeConfigMessage    = "invalid Claude configuration"
+	claudeGlobalConfigName      = ".claude.json"
+	claudeProjectsKey           = "projects"
+	claudeTrustKey              = "hasTrustDialogAccepted"
+	claudeConfigLockPrefix      = "claude-config-"
+	claudeConfigTemporaryPrefix = ".claude.json-"
+	claudeConfigDefaultFileMode = os.FileMode(0o600)
+	claudeTrustedJSONValue      = "true"
+	booleanTypeErrorMessage     = "must be a boolean"
+	invalidClaudeConfigMessage  = "invalid Claude configuration"
 )
 
 func canonicalClaudeDirectories(directories []string) ([]string, error) {
@@ -51,11 +51,11 @@ func claudeObject(value json.RawMessage, name string) (map[string]json.RawMessag
 func claudeTrustValue(value json.RawMessage, directory string) (bool, error) {
 	var decoded any
 	if err := json.Unmarshal(value, &decoded); err != nil {
-		return false, ljaError("Claude trust setting for %s %s: %w", directory, claudeBooleanTypeErrorMessage, err)
+		return false, ljaError("Claude trust setting for %s %s: %w", directory, booleanTypeErrorMessage, err)
 	}
 	trust, ok := decoded.(bool)
 	if !ok {
-		return false, ljaError("Claude trust setting for %s %s", directory, claudeBooleanTypeErrorMessage)
+		return false, ljaError("Claude trust setting for %s %s", directory, booleanTypeErrorMessage)
 	}
 	return trust, nil
 }

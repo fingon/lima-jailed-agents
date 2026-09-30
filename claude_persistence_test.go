@@ -62,7 +62,7 @@ func TestClaudeTrustedConfigRejectsInvalidDocumentsAndTypes(t *testing.T) {
 		{name: "malformed JSON", content: "{", want: invalidClaudeConfigMessage},
 		{name: "scalar projects", content: `{"projects":[]}`, want: "Claude projects must be an object"},
 		{name: "scalar project", content: `{"projects":{"` + project + `":[]}}`, want: "Claude project"},
-		{name: "non-boolean trust", content: `{"projects":{"` + project + `":{"hasTrustDialogAccepted":"yes"}}}`, want: claudeBooleanTypeErrorMessage},
+		{name: "non-boolean trust", content: `{"projects":{"` + project + `":{"hasTrustDialogAccepted":"yes"}}}`, want: booleanTypeErrorMessage},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
