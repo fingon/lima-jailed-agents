@@ -30,6 +30,8 @@ const (
 	aptGetCommand                    = "apt-get"
 	codeXHomeEnvironment             = "CODEX_HOME"
 	claudeConfigEnvironment          = "CLAUDE_CONFIG_DIR"
+	claudeDisableAutoUpdater         = "DISABLE_AUTOUPDATER"
+	claudeDisableAutoUpdaterValue    = "1"
 	openCodeConfigEnvironment        = "OPENCODE_CONFIG_DIR"
 	openCodeConfigContentEnvironment = "OPENCODE_CONFIG_CONTENT"
 	openCodePermissionConfig         = `{"permission":"allow"}`
@@ -43,6 +45,7 @@ const (
 var agentStateEnvironmentNames = []string{
 	codeXHomeEnvironment,
 	claudeConfigEnvironment,
+	claudeDisableAutoUpdater,
 	openCodeConfigEnvironment,
 	xdgConfigHomeEnv,
 	xdgDataHomeEnv,
@@ -602,7 +605,7 @@ func orderedAgentEnvironment(stateRoot, agentName string) ([][2]string, error) {
 	case codexAgentName:
 		order = []string{codeXHomeEnvironment}
 	case claudeAgentName:
-		order = []string{claudeConfigEnvironment}
+		order = []string{claudeConfigEnvironment, claudeDisableAutoUpdater}
 	default:
 		order = []string{openCodeConfigEnvironment, xdgConfigHomeEnv, xdgDataHomeEnv, xdgStateHomeEnv, xdgCacheHomeEnv}
 	}
@@ -739,6 +742,7 @@ func prepareAgentNamesLocked(options agentPreparationOptions, agentNames []strin
 	}
 	executables := make([]AgentExecutable, 0, len(agentNames))
 	codexRequested := false
+	claudeRequested := false
 	for _, agentName := range agentNames {
 		agent, err := agentSpec(agentName)
 		if err != nil {
@@ -764,11 +768,19 @@ func prepareAgentNamesLocked(options agentPreparationOptions, agentNames []strin
 		if agentName == codexAgentName {
 			codexRequested = true
 		}
+		if agentName == claudeAgentName {
+			claudeRequested = true
+		}
 		executables = append(executables, AgentExecutable{Name: agentName, Path: executablePath})
 	}
 	if codexRequested && len(options.trustDirectories) != 0 {
 		if err := ensureCodexDirectoryTrust(stateRoot, options.trustDirectories, options.lockDirectory); err != nil {
 			return ljaError("cannot prepare agent %s in VM %s: %w", codexAgentName, options.vmName, err)
+		}
+	}
+	if claudeRequested && len(options.trustDirectories) != 0 {
+		if err := ensureClaudeDirectoryTrust(stateRoot, options.trustDirectories, options.lockDirectory); err != nil {
+			return ljaError("cannot prepare agent %s in VM %s: %w", claudeAgentName, options.vmName, err)
 		}
 	}
 	if options.prepareWrappers && len(executables) != 0 {
@@ -889,7 +901,11 @@ func BuildAgentInvocation(agentName string, arguments []string) ([]string, map[s
 	environment := make(map[string]string)
 	if agentName == openCodeAgentName {
 		environment[openCodeConfigContentEnvironment] = openCodePermissionConfig
-	} else if agent.PermissionFlag != "" && !isLoginCommand(agentName, arguments) && !hasOption(invocation, permissionOptions(agentName)) {
+	}
+	if agentName == claudeAgentName {
+		environment[claudeDisableAutoUpdater] = claudeDisableAutoUpdaterValue
+	}
+	if agent.PermissionFlag != "" && !isLoginCommand(agentName, arguments) && !hasOption(invocation, permissionOptions(agentName)) {
 		insertAt := 0
 		if agentName == codexAgentName && len(invocation) > 0 && invocation[0] == codeXExecSubcommand {
 			insertAt = 1

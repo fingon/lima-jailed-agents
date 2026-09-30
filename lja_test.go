@@ -562,7 +562,7 @@ func TestDevelopmentConfigurationFixtureValidationErrors(t *testing.T) {
 		{name: duplicateEnvironmentTestName, fixture: "invalid/duplicate-env.yaml", want: "duplicate env key"},
 		{name: "null value", fixture: "invalid/null.yaml", want: nullValueError},
 		{name: nullEnvironmentValueTestName, fixture: "invalid/null-environment.yaml", want: "must be a mapping with string values"},
-		{name: scalarCoercionTestName, fixture: "invalid/scalar-coercion.yaml", want: "must be a boolean"},
+		{name: scalarCoercionTestName, fixture: "invalid/scalar-coercion.yaml", want: claudeBooleanTypeErrorMessage},
 		{name: arrayScalarCoercionTestName, fixture: "invalid/array-scalar-coercion.yaml", want: stringTypeError},
 		{name: multipleDocumentsTestName, fixture: "invalid/multiple-documents.yaml", want: singleYAMLDocumentError},
 	}
@@ -667,6 +667,10 @@ func TestAgentInvocationAndWrappers(t *testing.T) {
 	arguments, _, err = BuildAgentInvocation(claudeAgentName, []string{claudeAuthSubcommand, codeXLoginSubcommand})
 	assert.NilError(t, err)
 	assert.DeepEqual(t, arguments, []string{claudeAuthSubcommand, codeXLoginSubcommand})
+	arguments, environment, err = BuildAgentInvocation(claudeAgentName, nil)
+	assert.NilError(t, err)
+	assert.Equal(t, environment[claudeDisableAutoUpdater], claudeDisableAutoUpdaterValue)
+	assert.DeepEqual(t, arguments, []string{claudePermissionFlag})
 	arguments, environment, err = BuildAgentInvocation("opencode", []string{opencodeRunCommand, opencodePromptValue})
 	assert.NilError(t, err)
 	assert.DeepEqual(t, arguments, []string{opencodeRunCommand, opencodePromptValue})
@@ -678,6 +682,9 @@ func TestAgentInvocationAndWrappers(t *testing.T) {
 	assert.Assert(t, strings.Contains(content, "unset "+codeXHomeEnvironment))
 	assert.Assert(t, strings.Contains(content, codeXPermissionFlag))
 	assert.Assert(t, strings.Contains(content, codeXLoginSubcommand))
+	claudeContent, err := AgentWrapperContent(state, claudeAgentName, "/usr/bin/claude")
+	assert.NilError(t, err)
+	assert.Assert(t, strings.Contains(claudeContent, "export "+claudeDisableAutoUpdater+"='"+claudeDisableAutoUpdaterValue+"'"))
 
 	script, err := agentWrapperSetupScript(state, "test-vm", []AgentExecutable{{Name: codexAgentName, Path: "/usr/bin/codex"}})
 	assert.NilError(t, err)

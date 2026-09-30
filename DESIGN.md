@@ -27,6 +27,7 @@ small executable entry point in `cmd/lja`.
 | `git.go` | Recursive host Git configuration copying |
 | `gpg.go` | Invocation-scoped GPG agent forwarding and revocation |
 | `codex.go` | Conservative Codex TOML trust editing |
+| `claude.go` | Claude updater control and JSON trust editing |
 | `agent.go` | Package provisioning, wrappers, invocation, and launch |
 | `tools.go` | Logical tool definitions, dependency resolution, and provisioning |
 | `discovery.go` | Project discovery, status, and stop |
@@ -433,7 +434,7 @@ subcommand.
 
 Configured default agents are installed or reused during every preparation,
 including create, shell, make, agent launches, and update. They receive state
-directories, instruction refreshes, and Codex trust preparation. Shells and
+directories, instruction refreshes, and agent trust preparation. Shells and
 multi-agent launches expose them through per-VM wrappers in
 `/tmp/lja/<vm>/bin`. The launch prepends that directory to `PATH`; each wrapper
 restores only its own state environment and permission behavior, so an agent
@@ -548,7 +549,7 @@ runtime provider. Native package availability does not guarantee compatibility
 with every future agent release; successful agent executable probes remain
 required after installation. Existing-agent reuse remains unchanged.
 
-## Instructions and Codex trust
+## Instructions and agent trust
 
 Instruction synchronization is one-way and atomic. Optional host sources are:
 
@@ -592,6 +593,17 @@ replace an unexpected value or a scalar where a project table is required.
 The existing state-root lock, atomic replacement, file mode preservation,
 owner-only new files, path safety checks, and login-only behavior remain part
 of the contract. The host's separate Codex configuration is not edited.
+
+Claude trust editing updates `<state>/.claude/.claude.json`, the file selected
+by `CLAUDE_CONFIG_DIR`. It preserves unrelated JSON values and existing
+per-project fields while setting
+`projects[<canonical-directory>].hasTrustDialogAccepted` to `true` for the
+project and the actual launch directory. It canonicalizes and deduplicates
+directories, rejects malformed JSON or incompatible object and boolean types,
+and uses the same state-root lock, atomic replacement, mode preservation, and
+login-only behavior as Codex trust editing. Claude launches and persistent
+agent wrappers also receive `DISABLE_AUTOUPDATER=1`; this controls background
+updates without blocking an explicit LJA agent update.
 
 ## Git configuration
 

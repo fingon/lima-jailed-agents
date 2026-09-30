@@ -382,9 +382,10 @@ func validateEnvironmentName(node *yaml.Node, name string, reserved map[string]b
 
 func reservedEnvironmentNames() map[string]bool {
 	return map[string]bool{
-		"CODEX_HOME":              true,
-		"CLAUDE_CONFIG_DIR":       true,
-		"OPENCODE_CONFIG_DIR":     true,
+		codeXHomeEnvironment:      true,
+		claudeConfigEnvironment:   true,
+		claudeDisableAutoUpdater:  true,
+		openCodeConfigEnvironment: true,
 		"XDG_CONFIG_HOME":         true,
 		"XDG_DATA_HOME":           true,
 		"XDG_STATE_HOME":          true,

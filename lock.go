@@ -166,7 +166,10 @@ func agentStateEnvironment(stateRoot, agentName string) (map[string]string, erro
 		return map[string]string{codeXHomeEnvironment: filepath.Join(canonicalState, codexStateDirectoryName)}, nil
 	}
 	if agentName == claudeAgentName {
-		return map[string]string{claudeConfigEnvironment: filepath.Join(canonicalState, claudeStateDirectoryName)}, nil
+		return map[string]string{
+			claudeConfigEnvironment:  filepath.Join(canonicalState, claudeStateDirectoryName),
+			claudeDisableAutoUpdater: claudeDisableAutoUpdaterValue,
+		}, nil
 	}
 	stateDirectory := filepath.Join(canonicalState, openCodeStateDirectoryName)
 	environment := map[string]string{openCodeConfigEnvironment: stateDirectory}
