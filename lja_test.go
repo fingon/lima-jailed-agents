@@ -2,6 +2,7 @@ package lja
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -662,7 +663,7 @@ func TestCodexTrustPersistenceUsesPrivateModeAndNoUnnecessaryWrite(t *testing.T)
 func TestAgentInvocationAndWrappers(t *testing.T) {
 	arguments, environment, err := BuildAgentInvocation("codex", []string{codeXExecSubcommand, promptWithSpacesValue})
 	assert.NilError(t, err)
-	assert.DeepEqual(t, arguments, []string{codeXExecSubcommand, codeXPermissionFlag, promptWithSpacesValue})
+	assert.DeepEqual(t, arguments, []string{codexNoDaemonFlag, codeXExecSubcommand, codeXPermissionFlag, promptWithSpacesValue})
 	assert.Equal(t, len(environment), 0)
 	arguments, _, err = BuildAgentInvocation(claudeAgentName, []string{claudeAuthSubcommand, codeXLoginSubcommand})
 	assert.NilError(t, err)
@@ -1051,4 +1052,41 @@ func TestGitConfigCopiesAndWriteScript(t *testing.T) {
 	assert.Assert(t, strings.Contains(script, "cd -- \"$HOME\""))
 	_, err = GitConfigWriteScript("../escape")
 	assert.Assert(t, err != nil)
+}
+
+func TestCodexInvocationsAndWrappersDisableDaemon(t *testing.T) {
+	const (
+		sandboxFlag      = "--sandbox"
+		readOnlyMode     = "read-only"
+		resumeSubcommand = "resume"
+		lastFlag         = "--last"
+	)
+	root := t.TempDir()
+	executable := filepath.Join(root, agentTestName)
+	assert.NilError(t, os.WriteFile(executable, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\n"), 0o700))
+	wrapper := filepath.Join(root, "wrapper")
+	content, err := AgentWrapperContent(root, codexAgentName, executable)
+	assert.NilError(t, err)
+	assert.NilError(t, os.WriteFile(wrapper, []byte(content), 0o700))
+	tests := []struct {
+		name      string
+		arguments []string
+		expected  []string
+	}{
+		{name: "interactive", expected: []string{codexNoDaemonFlag, codeXPermissionFlag}},
+		{name: "exec", arguments: []string{codeXExecSubcommand, promptWithSpacesValue}, expected: []string{codexNoDaemonFlag, codeXExecSubcommand, codeXPermissionFlag, promptWithSpacesValue}},
+		{name: "explicit permissions", arguments: []string{sandboxFlag, readOnlyMode}, expected: []string{codexNoDaemonFlag, sandboxFlag, readOnlyMode}},
+		{name: "login", arguments: []string{codeXLoginSubcommand}, expected: []string{codexNoDaemonFlag, codeXLoginSubcommand}},
+		{name: resumeSubcommand, arguments: []string{resumeSubcommand, lastFlag}, expected: []string{codexNoDaemonFlag, codeXPermissionFlag, resumeSubcommand, lastFlag}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			arguments, _, err := BuildAgentInvocation(codexAgentName, test.arguments)
+			assert.NilError(t, err)
+			assert.DeepEqual(t, arguments, test.expected)
+			output, err := exec.Command(wrapper, test.arguments...).CombinedOutput()
+			assert.NilError(t, err, string(output))
+			assert.Equal(t, string(output), strings.Join(test.expected, "\n")+"\n")
+		})
+	}
 }

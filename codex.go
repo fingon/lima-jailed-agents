@@ -14,17 +14,20 @@ import (
 )
 
 const (
-	codexStateDirectoryName  = ".codex"
-	codexConfigName          = "config.toml"
-	codexProjectsKey         = "projects"
-	codexTrustKey            = "trust_level"
-	codexUpdateCheckKey      = "check_for_update_on_startup"
-	codexTrustedValue        = "trusted"
-	codexUntrustedValue      = "untrusted"
-	codexTrustedTOMLValue    = `"trusted"`
-	codexUpdateDisabledValue = "false"
-	codexUpdateTypeError     = "Codex update check setting " + booleanTypeErrorMessage
-	invalidCodexTOMLMessage  = "invalid Codex TOML"
+	codexStateDirectoryName = ".codex"
+	codexConfigName         = "config.toml"
+	codexProjectsKey        = "projects"
+	codexTrustKey           = "trust_level"
+	codexFeaturesKey        = "features"
+	codexDaemonAutoStartKey = "daemon_auto_start"
+	codexDaemonSettingName  = "Codex daemon auto-start setting"
+	codexUpdateSettingName  = "Codex update check setting"
+	codexUpdateCheckKey     = "check_for_update_on_startup"
+	codexTrustedValue       = "trusted"
+	codexUntrustedValue     = "untrusted"
+	codexTrustedTOMLValue   = `"trusted"`
+	codexDisabledValue      = "false"
+	invalidCodexTOMLMessage = "invalid Codex TOML"
 )
 
 func canonicalCodexDirectories(directories []string) ([]string, error) {
@@ -97,20 +100,19 @@ func codexSetDirectoryTrust(document *tomledit.Document, directory string) (bool
 	return true, nil
 }
 
-func codexSetUpdateSuppression(document *tomledit.Document) (bool, error) {
-	path := []string{codexUpdateCheckKey}
+func codexSetSuppression(document *tomledit.Document, path []string, settingName string) (bool, error) {
 	value, present := document.Get(path)
 	if present {
 		enabled, ok := value.(bool)
 		if !ok {
-			return false, ljaError(codexUpdateTypeError)
+			return false, ljaError("%s %s", settingName, booleanTypeErrorMessage)
 		}
 		if !enabled {
 			return false, nil
 		}
 	}
-	if err := document.Set(path, unstable.RawMessage(codexUpdateDisabledValue)); err != nil {
-		return false, ljaError("cannot edit Codex update check setting: %w", err)
+	if err := document.Set(path, unstable.RawMessage(codexDisabledValue)); err != nil {
+		return false, ljaError("cannot edit %s: %w", settingName, err)
 	}
 	return true, nil
 }
@@ -132,17 +134,17 @@ func validateCodexTrust(document *tomledit.Document, directories []string) error
 	return nil
 }
 
-func validateCodexUpdateSuppression(document *tomledit.Document) error {
-	value, present := document.Get([]string{codexUpdateCheckKey})
+func validateCodexSuppression(document *tomledit.Document, path []string, settingName string) error {
+	value, present := document.Get(path)
 	if !present {
-		return ljaError("Codex update check setting missing after edit")
+		return ljaError("%s missing after edit", settingName)
 	}
 	enabled, ok := value.(bool)
 	if !ok {
-		return ljaError(codexUpdateTypeError)
+		return ljaError("%s %s", settingName, booleanTypeErrorMessage)
 	}
 	if enabled {
-		return ljaError("Codex update check setting is enabled after edit")
+		return ljaError("%s is enabled after edit", settingName)
 	}
 	return nil
 }
@@ -197,17 +199,34 @@ func codexConfiguredConfig(content string, directories []string) (string, error)
 	if err != nil {
 		return "", ljaError(invalidCodexTOMLMessage+": %w", err)
 	}
-	changed, err := codexSetUpdateSuppression(document)
-	if err != nil {
-		return "", err
+	features, present := document.Get([]string{codexFeaturesKey})
+	if present && !codexIsTable(features) {
+		return "", ljaError("Codex features must be a table")
+	}
+	settings := []struct {
+		path []string
+		name string
+	}{
+		{path: []string{codexUpdateCheckKey}, name: codexUpdateSettingName},
+		{path: []string{codexFeaturesKey, codexDaemonAutoStartKey}, name: codexDaemonSettingName},
+	}
+	changed := false
+	for _, setting := range settings {
+		settingChanged, setErr := codexSetSuppression(document, setting.path, setting.name)
+		if setErr != nil {
+			return "", setErr
+		}
+		changed = changed || settingChanged
 	}
 	configured := string(document.Bytes())
 	validatedDocument, err := tomledit.Parse([]byte(configured))
 	if err != nil {
 		return "", ljaError("edited Codex TOML is invalid: %w", err)
 	}
-	if err := validateCodexUpdateSuppression(validatedDocument); err != nil {
-		return "", err
+	for _, setting := range settings {
+		if err := validateCodexSuppression(validatedDocument, setting.path, setting.name); err != nil {
+			return "", err
+		}
 	}
 	if !changed {
 		return updated, nil

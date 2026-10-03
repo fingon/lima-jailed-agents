@@ -35,6 +35,7 @@ const (
 	openCodeConfigEnvironment        = "OPENCODE_CONFIG_DIR"
 	openCodeConfigContentEnvironment = "OPENCODE_CONFIG_CONTENT"
 	openCodePermissionConfig         = `{"permission":"allow"}`
+	codexNoDaemonFlag                = "--no-daemon"
 	codeXPermissionFlag              = "--dangerously-bypass-approvals-and-sandbox"
 	claudePermissionFlag             = "--dangerously-skip-permissions"
 	codeXExecSubcommand              = "exec"
@@ -637,6 +638,9 @@ func agentWrapperContent(stateRoot, agentName, executablePath string) (string, e
 		lines = append(lines, "export "+entry[0]+"="+shellQuote(entry[1]))
 	}
 	quotedExecutable := shellQuote(executablePath)
+	if agentName == codexAgentName {
+		quotedExecutable += " " + shellQuote(codexNoDaemonFlag)
+	}
 	if agent.PermissionFlag == "" {
 		return strings.Join(append(lines, "exec "+quotedExecutable+" \"$@\""), "\n") + "\n", nil
 	}
@@ -913,6 +917,9 @@ func BuildAgentInvocation(agentName string, arguments []string) ([]string, map[s
 		invocation = append(invocation, "")
 		copy(invocation[insertAt+1:], invocation[insertAt:])
 		invocation[insertAt] = agent.PermissionFlag
+	}
+	if agentName == codexAgentName {
+		invocation = append([]string{codexNoDaemonFlag}, invocation...)
 	}
 	return invocation, environment, nil
 }

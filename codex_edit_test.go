@@ -259,7 +259,7 @@ func TestCodexConfiguredConfigSuppressesStartupUpdates(t *testing.T) {
 	project := filepath.Join(root, "project")
 	assert.NilError(t, os.Mkdir(project, 0o755))
 	quotedProject := strconv.Quote(project)
-	trustedProject := "[projects." + quotedProject + "]\ntrust_level = \"trusted\"\n"
+	trustedProject := "features.daemon_auto_start = false\n[projects." + quotedProject + "]\ntrust_level = \"trusted\"\n"
 	tests := []struct {
 		name      string
 		content   string
@@ -269,7 +269,7 @@ func TestCodexConfiguredConfigSuppressesStartupUpdates(t *testing.T) {
 		{
 			name:     "inserts setting before project tables",
 			content:  trustedProject,
-			expected: "check_for_update_on_startup = false\n" + trustedProject,
+			expected: strings.Replace(trustedProject, "\n[projects.", "\ncheck_for_update_on_startup = false\n[projects.", 1),
 		},
 		{
 			name:     "replaces enabled setting and preserves comment",
@@ -332,6 +332,21 @@ func TestCodexEditRejectsInvalidDocuments(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			_, err := tomledit.Parse([]byte(test.content))
 			assert.Assert(t, err != nil)
+		})
+	}
+}
+
+func TestCodexConfiguredConfigSuppressesDaemonStartup(t *testing.T) {
+	for _, name := range []string{"daemon-missing", "daemon-table", "daemon-dotted", "daemon-inline"} {
+		t.Run(name, func(t *testing.T) {
+			input := readCodexEditFixture(t, name+"/input.toml")
+			expected := readCodexEditFixture(t, name+"/expected.toml")
+			updated, err := codexConfiguredConfig(input, nil)
+			assert.NilError(t, err)
+			assert.Equal(t, updated, expected)
+			repeated, err := codexConfiguredConfig(updated, nil)
+			assert.NilError(t, err)
+			assert.Equal(t, repeated, updated)
 		})
 	}
 }

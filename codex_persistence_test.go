@@ -133,6 +133,12 @@ func TestCodexTrustPersistenceLeavesFilesUnchangedOnErrors(t *testing.T) {
 		{name: "incompatible trust type", content: func(project string) string {
 			return "[projects." + strconv.Quote(project) + "]\ntrust_level = 1\n"
 		}, want: stringTypeError},
+		{name: "incompatible features type", content: func(string) string {
+			return "features = true\n"
+		}, want: "Codex features must be a table"},
+		{name: "incompatible daemon setting type", content: func(string) string {
+			return "features.daemon_auto_start = \"yes\"\n"
+		}, want: booleanTypeErrorMessage},
 		{name: "incompatible update setting type", content: func(string) string {
 			return codexInvalidUpdateValue
 		}, want: booleanTypeErrorMessage},

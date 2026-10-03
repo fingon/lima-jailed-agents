@@ -1,0 +1,5 @@
+model = "example"
+check_for_update_on_startup = false
+
+[features]
+daemon_auto_start = false

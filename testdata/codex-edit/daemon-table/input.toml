@@ -1,0 +1,4 @@
+check_for_update_on_startup = false
+[features]
+other = true
+daemon_auto_start = true # keep comment

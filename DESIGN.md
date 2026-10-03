@@ -597,6 +597,13 @@ of the contract. During normal Codex preparation, set the top-level
 this suppresses startup update checks without blocking an explicit LJA agent
 update. Preserve an existing setting's comments and layout, reject an
 incompatible value, and do not edit the host's separate Codex configuration.
+Codex invocations and persistent wrappers always prepend `--no-daemon`,
+including when native permission options are supplied. Preparation also sets
+`features.daemon_auto_start = false` for direct shell launches. This setting
+only disables automatic startup; the invocation flag also prevents attaching
+to an existing daemon. Preserve unrelated feature settings and comments, and
+reject a non-table `features` value or non-boolean auto-start value without
+writing.
 
 Claude trust editing updates `<state>/.claude/.claude.json`, the file selected
 by `CLAUDE_CONFIG_DIR`. It preserves unrelated JSON values and existing
