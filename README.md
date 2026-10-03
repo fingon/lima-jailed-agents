@@ -389,7 +389,8 @@ other host-agent settings and credentials are not imported.
 Codex trust entries for the project and launch directory are maintained in the
 selected `.codex/config.toml`. Preparation also sets the top-level
 `check_for_update_on_startup` setting to `false`, while preserving unrelated
-text and comments. Codex launches and shell wrappers pass `--no-daemon`;
+text and comments. Codex launches and shell wrappers ensure `--no-daemon`
+is passed without adding duplicates;
 preparation also sets `features.daemon_auto_start = false` as a backstop for
 direct shell launches. The editor supports ordinary, dotted-key, and inline
 project tables, and refuses malformed or incompatible TOML layouts without

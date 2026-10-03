@@ -639,7 +639,16 @@ func agentWrapperContent(stateRoot, agentName, executablePath string) (string, e
 	}
 	quotedExecutable := shellQuote(executablePath)
 	if agentName == codexAgentName {
-		quotedExecutable += " " + shellQuote(codexNoDaemonFlag)
+		lines = append(lines,
+			"if [ \"${1-}\" = "+shellQuote(codexNoDaemonFlag)+" ]; then shift; fi",
+			"daemon_flag="+shellQuote(codexNoDaemonFlag),
+			"for argument in \"$@\"; do",
+			"    case \"$argument\" in",
+			"        "+codexNoDaemonFlag+") daemon_flag='' ;;",
+			"    esac",
+			"done",
+		)
+		quotedExecutable += " ${daemon_flag:+\"$daemon_flag\"}"
 	}
 	if agent.PermissionFlag == "" {
 		return strings.Join(append(lines, "exec "+quotedExecutable+" \"$@\""), "\n") + "\n", nil
@@ -901,6 +910,9 @@ func BuildAgentInvocation(agentName string, arguments []string) ([]string, map[s
 	if err != nil {
 		return nil, nil, err
 	}
+	if agentName == codexAgentName && len(arguments) > 0 && arguments[0] == codexNoDaemonFlag {
+		arguments = arguments[1:]
+	}
 	invocation := append([]string{}, arguments...)
 	environment := make(map[string]string)
 	if agentName == openCodeAgentName {
@@ -918,7 +930,7 @@ func BuildAgentInvocation(agentName string, arguments []string) ([]string, map[s
 		copy(invocation[insertAt+1:], invocation[insertAt:])
 		invocation[insertAt] = agent.PermissionFlag
 	}
-	if agentName == codexAgentName {
+	if agentName == codexAgentName && !hasOption(invocation, []string{codexNoDaemonFlag}) {
 		invocation = append([]string{codexNoDaemonFlag}, invocation...)
 	}
 	return invocation, environment, nil

@@ -1074,6 +1074,9 @@ func TestCodexInvocationsAndWrappersDisableDaemon(t *testing.T) {
 		expected  []string
 	}{
 		{name: "interactive", expected: []string{codexNoDaemonFlag, codeXPermissionFlag}},
+		{name: "explicit no daemon", arguments: []string{codexNoDaemonFlag}, expected: []string{codexNoDaemonFlag, codeXPermissionFlag}},
+		{name: "explicit no daemon login", arguments: []string{codexNoDaemonFlag, codeXLoginSubcommand}, expected: []string{codexNoDaemonFlag, codeXLoginSubcommand}},
+		{name: "trailing no daemon", arguments: []string{sandboxFlag, readOnlyMode, codexNoDaemonFlag}, expected: []string{sandboxFlag, readOnlyMode, codexNoDaemonFlag}},
 		{name: "exec", arguments: []string{codeXExecSubcommand, promptWithSpacesValue}, expected: []string{codexNoDaemonFlag, codeXExecSubcommand, codeXPermissionFlag, promptWithSpacesValue}},
 		{name: "explicit permissions", arguments: []string{sandboxFlag, readOnlyMode}, expected: []string{codexNoDaemonFlag, sandboxFlag, readOnlyMode}},
 		{name: "login", arguments: []string{codeXLoginSubcommand}, expected: []string{codexNoDaemonFlag, codeXLoginSubcommand}},
@@ -1085,6 +1088,9 @@ func TestCodexInvocationsAndWrappersDisableDaemon(t *testing.T) {
 			assert.NilError(t, err)
 			assert.DeepEqual(t, arguments, test.expected)
 			output, err := exec.Command(wrapper, test.arguments...).CombinedOutput()
+			assert.NilError(t, err, string(output))
+			assert.Equal(t, string(output), strings.Join(test.expected, "\n")+"\n")
+			output, err = exec.Command(wrapper, arguments...).CombinedOutput()
 			assert.NilError(t, err, string(output))
 			assert.Equal(t, string(output), strings.Join(test.expected, "\n")+"\n")
 		})
