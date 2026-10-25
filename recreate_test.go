@@ -23,6 +23,7 @@ const (
 	vmPackageInstallNoopEnv               = "LJA_TEST_PACKAGE_INSTALL_NOOP"
 	vmNodeRuntimeModeEnv                  = "LJA_TEST_NODE_RUNTIME_MODE"
 	vmAgentInstallFailureEnv              = "LJA_TEST_AGENT_INSTALL_FAILURE"
+	vmAgentRemovalFailureEnv              = "LJA_TEST_AGENT_REMOVAL_FAILURE"
 	logicalToolInstallFailureEnv          = "LJA_TEST_LOGICAL_TOOL_INSTALL_FAILURE"
 	logicalToolProbeFailureEnv            = "LJA_TEST_LOGICAL_TOOL_PROBE_FAILURE"
 	logicalToolConnectionFailureEnv       = "LJA_TEST_LOGICAL_TOOL_CONNECTION_FAILURE"
@@ -287,6 +288,9 @@ func runVMProcess() error {
 				return vmProcessExitError{code: 23, message: logicalToolInstallationFailureMessage}
 			}
 			database.LogicalTools[logicalToolPrek] = true
+		}
+		if len(guestArguments) >= 3 && guestArguments[0] == sudoCommand && guestArguments[1] == npmCommand && guestArguments[2] == npmUninstallCommand && os.Getenv(vmAgentRemovalFailureEnv) == "1" {
+			return vmProcessExitError{code: 23, message: "legacy package removal failed"}
 		}
 		if len(guestArguments) >= 3 && guestArguments[0] == sudoCommand && guestArguments[1] == npmCommand && guestArguments[2] == installCommand && os.Getenv(vmAgentInstallFailureEnv) == "1" {
 			if _, err := fmt.Fprintln(os.Stderr, "npm ERR! code EBADENGINE"); err != nil {
@@ -1182,8 +1186,10 @@ func TestOpenCodeInstallationAndReuse(t *testing.T) {
 		name              string
 		update            bool
 		wantInstallations int
+		wantError         string
 	}{
 		{name: "explicit update", update: true, wantInstallations: 1},
+		{name: "removal failure", update: true, wantError: "cannot remove legacy agent package opencode-ai"},
 		{name: "reuse existing executable"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -1191,20 +1197,37 @@ func TestOpenCodeInstallationAndReuse(t *testing.T) {
 			config := DevelopmentConfig{Agents: []string{openCodeAgentName}}
 			options.Development = &config
 
+			if test.wantError != "" {
+				t.Setenv(vmAgentRemovalFailureEnv, "1")
+			}
 			_, err := InstallAgent(project, openCodeAgentName, test.update, options)
-			assert.NilError(t, err)
+			if test.wantError != "" {
+				assert.ErrorContains(t, err, test.wantError)
+			} else {
+				assert.NilError(t, err)
+			}
 
 			database, err := readVMDatabase()
 			assert.NilError(t, err)
 			installations := 0
+			removals := 0
 			for _, operation := range database.Operations {
 				command := strings.Join(operation, " ")
+				if strings.Contains(command, "npm uninstall -g opencode-ai") {
+					removals++
+				}
 				if strings.Contains(command, "npm install") {
+					assert.Equal(t, removals, 1)
 					assert.Assert(t, strings.Contains(command, "npm install --engine-strict -g @opencode/cli"))
 					installations++
 				}
 			}
 			assert.Equal(t, installations, test.wantInstallations)
+			if test.update && test.wantError == "" {
+				assert.Equal(t, removals, 1)
+			} else {
+				assert.Equal(t, removals, 0)
+			}
 		})
 	}
 }

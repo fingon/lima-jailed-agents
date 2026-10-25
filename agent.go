@@ -14,6 +14,8 @@ const (
 	codexAgentName                   = "codex"
 	claudeAgentName                  = "claude"
 	openCodeAgentName                = "opencode"
+	legacyOpenCodePackage            = "opencode-ai"
+	npmUninstallCommand              = "uninstall"
 	claudeStateDirectoryName         = ".claude"
 	openCodeStateDirectoryName       = ".opencode"
 	openCodeDirectoryName            = "opencode"
@@ -339,6 +341,16 @@ func installAgentPackage(options agentInstallationOptions) error {
 	guestOptions := defaultProcessOptions(options.limactlCommand, options.contexts...)
 	guestOptions.captureOutput = true
 	guestOptions.check = false
+	if options.update && options.agent.Name == openCodeAgentName {
+		slog.Info("removing legacy agent package", "package", legacyOpenCodePackage, "vm", options.vmName)
+		result, err := runGuest(options.project, options.vmName, []string{sudoCommand, npmCommand, npmUninstallCommand, npmGlobalFlag, legacyOpenCodePackage}, guestExecution(guestOptions, nil))
+		if err != nil {
+			return ljaError("cannot remove legacy agent package %s in VM %s: %w", legacyOpenCodePackage, options.vmName, err)
+		}
+		if result.ExitCode != 0 {
+			return ljaError("cannot remove legacy agent package %s in VM %s: exit status %d: %s", legacyOpenCodePackage, options.vmName, result.ExitCode, processOutput(result))
+		}
+	}
 	result, err := runGuest(options.project, options.vmName, []string{sudoCommand, npmCommand, installCommand, npmEngineStrictFlag, npmGlobalFlag, options.agent.Package}, guestExecution(guestOptions, nil))
 	if err != nil {
 		return ljaError("cannot install agent package %s in VM %s: %w", options.agent.Package, options.vmName, err)

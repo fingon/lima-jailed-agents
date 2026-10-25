@@ -419,7 +419,9 @@ behavior.
 
 The selected agent executable is probed before installation and after package
 installation. Existing installations are reused; `update` explicitly installs
-the selected package again. The built-in mappings are:
+the selected package again. Explicit OpenCode updates first uninstall the legacy
+global npm package `opencode-ai`, releasing its executable before installing v2.
+Removal failures stop the update and are reported. The built-in mappings are:
 
 | Agent | Package | Executable | Default |
 | --- | --- | --- | --- |

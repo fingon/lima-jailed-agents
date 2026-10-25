@@ -276,7 +276,8 @@ add third-party repositories.
 
 OpenCode installs and explicit updates use the v2 npm package `@opencode/cli`.
 Existing agent executables are reused; run `lja update opencode` to request
-installation of v2 in an existing VM.
+installation of v2 in an existing VM. Explicit OpenCode updates first uninstall
+the legacy global npm package `opencode-ai` to release its executable.
 
 Only explicitly named caller variables are forwarded. Missing passthrough
 variables are errors, empty values are preserved, and values are never stored
