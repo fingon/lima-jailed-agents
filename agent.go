@@ -69,7 +69,7 @@ func AgentSpecByName(name string) (AgentSpec, error) {
 	case claudeAgentName:
 		return AgentSpec{Name: name, Package: "@anthropic-ai/claude-code", Executable: claudeAgentName, PermissionFlag: claudePermissionFlag}, nil
 	case openCodeAgentName:
-		return AgentSpec{Name: name, Package: "opencode-ai", Executable: openCodeAgentName}, nil
+		return AgentSpec{Name: name, Package: "@opencode/cli", Executable: openCodeAgentName}, nil
 	default:
 		return AgentSpec{}, ljaError("unknown agent %s; expected one of codex, claude, opencode", name)
 	}

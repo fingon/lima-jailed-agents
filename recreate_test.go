@@ -1177,6 +1177,38 @@ func TestUpdateConfiguredAgentInstallsOnce(t *testing.T) {
 	assert.Equal(t, installations, 1)
 }
 
+func TestOpenCodeInstallationAndReuse(t *testing.T) {
+	for _, test := range []struct {
+		name              string
+		update            bool
+		wantInstallations int
+	}{
+		{name: "explicit update", update: true, wantInstallations: 1},
+		{name: "reuse existing executable"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			project, _, options := vmFixture(t, limaStatusRunning)
+			config := DevelopmentConfig{Agents: []string{openCodeAgentName}}
+			options.Development = &config
+
+			_, err := InstallAgent(project, openCodeAgentName, test.update, options)
+			assert.NilError(t, err)
+
+			database, err := readVMDatabase()
+			assert.NilError(t, err)
+			installations := 0
+			for _, operation := range database.Operations {
+				command := strings.Join(operation, " ")
+				if strings.Contains(command, "npm install") {
+					assert.Assert(t, strings.Contains(command, "npm install --engine-strict -g @opencode/cli"))
+					installations++
+				}
+			}
+			assert.Equal(t, installations, test.wantInstallations)
+		})
+	}
+}
+
 func TestAgentInstallationReportsRuntimeFailures(t *testing.T) {
 	for _, test := range []struct {
 		name        string

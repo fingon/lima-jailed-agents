@@ -274,6 +274,10 @@ strict engine checking; incompatibility errors include runtime versions and
 suggest a newer template or custom provisioning. LJA does not install Snap or
 add third-party repositories.
 
+OpenCode installs and explicit updates use the v2 npm package `@opencode/cli`.
+Existing agent executables are reused; run `lja update opencode` to request
+installation of v2 in an existing VM.
+
 Only explicitly named caller variables are forwarded. Missing passthrough
 variables are errors, empty values are preserved, and values are never stored
 in persistent wrappers or printed by `config`. LJA-managed agent state

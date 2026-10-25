@@ -660,6 +660,13 @@ func TestCodexTrustPersistenceUsesPrivateModeAndNoUnnecessaryWrite(t *testing.T)
 	assert.Assert(t, os.SameFile(beforeInfo, afterInfo))
 }
 
+func TestOpenCodeAgentSpec(t *testing.T) {
+	spec, err := AgentSpecByName(openCodeAgentName)
+	assert.NilError(t, err)
+	assert.Equal(t, spec.Package, "@opencode/cli")
+	assert.Equal(t, spec.Executable, openCodeAgentName)
+}
+
 func TestAgentInvocationAndWrappers(t *testing.T) {
 	arguments, environment, err := BuildAgentInvocation("codex", []string{codeXExecSubcommand, promptWithSpacesValue})
 	assert.NilError(t, err)

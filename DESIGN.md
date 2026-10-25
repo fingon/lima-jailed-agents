@@ -425,7 +425,7 @@ the selected package again. The built-in mappings are:
 | --- | --- | --- | --- |
 | Codex | `@openai/codex` | `codex` | `--dangerously-bypass-approvals-and-sandbox` |
 | Claude Code | `@anthropic-ai/claude-code` | `claude` | `--dangerously-skip-permissions` |
-| OpenCode | `opencode-ai` | `opencode` | `OPENCODE_CONFIG_CONTENT={"permission":"allow"}` |
+| OpenCode v2 | `@opencode/cli` | `opencode` | `OPENCODE_CONFIG_CONTENT={"permission":"allow"}` |
 
 Login commands are forwarded without permission defaults. Explicit native
 permission options are detected in both `--option value`-style vectors and
