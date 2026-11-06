@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   sanity:
-    runs-on: ubuntu-latest
+    runs-on: avrea-ubuntu-latest-2-vcpu
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
